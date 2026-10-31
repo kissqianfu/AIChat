@@ -15,6 +15,7 @@ import (
 	"github.com/kissqianfu/aichat/internal/ingress/qqevent"
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/orchestrator"
+	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 	"github.com/kissqianfu/aichat/internal/stats"
 	"github.com/kissqianfu/aichat/internal/storage/db/repo"
@@ -32,10 +33,12 @@ func newEventHandler(sender *qqapi.Adapter, orch *orchestrator.Orchestrator, bud
 	fu *followup.Followup, statsObs *stats.Observer,
 	welcomeGen func(ctx context.Context, kind, who string) string) func(context.Context, *event.Event) {
 	return func(ctx context.Context, sdkEvent *event.Event) {
+		started := clock.System().Now() // 端到端耗时起点（收到消息）；G2 禁裸 time.Now
 		ev := qqevent.FromSDK(sdkEvent)
 		// 入口闸门（DEV_PROMPT §3.3 / docs/01 §6.5.1）：机器人消息（含其他 bot 与自身）
 		// 一律静默丢弃——不入库、不进上下文、不记忆、不回复，防自触发死循环。
 		if ev.Author.Bot || (selfID != "" && ev.Author.ID == selfID) {
+			observability.CountDropped(observability.DropBot)
 			return
 		}
 		// 消息计数（2026-11-01 从入口挪到 bot 过滤之后）：只计真实用户消息，
@@ -56,10 +59,12 @@ func newEventHandler(sender *qqapi.Adapter, orch *orchestrator.Orchestrator, bud
 		if ev.Scene == port.SceneGroup {
 			// 群内泄露检测（docs/01 §6.3）：出现 24 位码形状 → 作废 + 告警 owner，静默丢弃。
 			if authCmd.HandleGroupLeak(ctx, ev) {
+				observability.CountDropped(observability.DropLeak)
 				return
 			}
 			// 群内 "/" 一律静默丢弃（docs/01 §6.5.1）：指令只走管理员私聊。
 			if admin.IsCommandText(admin.FirstText(ev)) {
+				observability.CountDropped(observability.DropCmd)
 				return
 			}
 		}
@@ -135,6 +140,7 @@ func newEventHandler(sender *qqapi.Adapter, orch *orchestrator.Orchestrator, bud
 			if banned, err := banRepo.IsBanned(ctx, ev.Scene, ev.TargetID, ev.Author.ID); err != nil {
 				logger.Warn("查询拉黑失败，按未拉黑处理", "group", ev.TargetID, "user", ev.Author.ID, "err", err)
 			} else if banned {
+				observability.CountDropped(observability.DropBanned)
 				logger.Info("已拉黑用户的消息被忽略", "group", ev.TargetID, "user", ev.Author.ID)
 				return
 			}
@@ -180,6 +186,9 @@ func newEventHandler(sender *qqapi.Adapter, orch *orchestrator.Orchestrator, bud
 		}
 		if sent > 0 && ev.Scene == port.SceneGroup {
 			orch.MarkActive(ev.TargetID) // 开活跃窗口：3 分钟内该群追问/插话免点名
+		}
+		if sent > 0 {
+			observability.ObserveReplyLatency(clock.System().Now().Sub(started)) // 端到端耗时
 		}
 		if statsObs != nil && sent > 0 {
 			statsObs.ReplyObservedAsync(ev) // reply_hit + bot_reply_count

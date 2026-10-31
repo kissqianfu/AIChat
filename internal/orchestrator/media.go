@@ -100,7 +100,7 @@ func (o *Orchestrator) transcribeVoice(ctx context.Context, ev port.Event) strin
 		}
 		start := o.clock.Now()
 		text, err := o.cfg.Transcriber.Transcribe(ctx, data, mime)
-		observability.ObserveLLMCall("asr", -1, -1, o.clock.Now().Sub(start)) // ASR 无 token
+		observability.ObserveMediaCall(observability.SlotASR, start, err)
 		if err != nil {
 			o.cfg.Logger.Warn("语音识别失败", "event_id", ev.ID, "err", err)
 			return o.transcribeWavFallback(ctx, ev, p)

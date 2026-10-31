@@ -13,10 +13,13 @@ func (o *Orchestrator) cachedReply(ctx context.Context, ev port.Event, userText 
 	if o.cfg.Cache == nil {
 		return "", false
 	}
+	// 缓存实现返回自己的类型名（exact/semantic），转成 observability 的强类型 label。
+	kind := observability.CacheKind(o.cfg.Cache.Kind())
+	observability.CountReplyCacheLookup(kind)
 	reply, ok := o.cfg.Cache.Lookup(ctx, ev, userText)
 	if ok {
-		observability.CountReplyCacheHit()
-		o.cfg.Logger.Info("命中回复缓存", "event_id", ev.ID)
+		observability.CountReplyCacheHit(kind)
+		o.cfg.Logger.Info("命中回复缓存", "event_id", ev.ID, "kind", string(kind))
 	}
 	return reply, ok
 }

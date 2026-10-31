@@ -268,7 +268,8 @@ func (r *Registry) ChatModel(ctx context.Context, slot string) (port.ChatModel, 
 			model = forcedThinking{inner: model}
 		}
 		// Prometheus 打点装饰（2026-11-01）：按槽位记调用数/耗时/token。
-		model = observability.InstrumentChatModel(model, slot)
+		// 槽位名来自配置（运行时字符串），转成 observability 的强类型 label。
+		model = observability.InstrumentChatModel(model, observability.LLMSlot(slot))
 		models = append(models, model)
 		names = append(names, ref.BaseURL+"/"+ref.Model)
 	}

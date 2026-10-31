@@ -65,7 +65,7 @@ func (t *VoiceTool) Invoke(ctx context.Context, args json.RawMessage) (port.Tool
 	clk := clock.System()
 	start := clk.Now()
 	silk, err := t.synth.Synthesize(ctx, text)
-	observability.ObserveLLMCall("tts", -1, -1, clk.Now().Sub(start)) // TTS 无 token
+	observability.ObserveMediaCall(observability.SlotTTS, start, err)
 	if err != nil {
 		return port.ToolResult{}, fmt.Errorf("send_voice: 合成失败: %w", err)
 	}

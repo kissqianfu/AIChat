@@ -166,11 +166,13 @@ func (o *Orchestrator) Reply(ctx context.Context, ev port.Event) (port.Outbound,
 // GuardAllows → resolvePolicy（含 maint 短路）→ cachedPath → generateReply。
 func (o *Orchestrator) Replies(ctx context.Context, ev port.Event) ([]port.Outbound, error) {
 	if !o.allowed(ctx, ev) {
+		observability.CountDropped(observability.DropGate)
 		return nil, ErrIgnored
 	}
 	// MessageType 降级（docs/01 §2.9）：102 聊天记录的 content 是"[聊天记录]"占位文本，
 	// 喂给模型答非所问，直接忽略；101 并行消息取 Parts 文本（firstText 天然覆盖，无需特判）。
 	if ev.MessageType == 102 {
+		observability.CountDropped(observability.DropRecord)
 		o.cfg.Logger.Info("聊天记录消息已忽略", "event_id", ev.ID)
 		return nil, ErrIgnored
 	}
@@ -182,6 +184,7 @@ func (o *Orchestrator) Replies(ctx context.Context, ev port.Event) ([]port.Outbo
 		if ev.AtMe {
 			userText = "@了我，但没有说话"
 		} else {
+			observability.CountDropped(observability.DropEmpty)
 			return nil, ErrIgnored
 		}
 	}
@@ -194,6 +197,7 @@ func (o *Orchestrator) Replies(ctx context.Context, ev port.Event) ([]port.Outbo
 	}
 	if allowed, guardOuts := o.GuardAllows(ctx, ev); !allowed {
 		if guardOuts == nil {
+			observability.CountDropped(observability.DropGuard)
 			return nil, ErrIgnored
 		}
 		return guardOuts, nil

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 	"github.com/kissqianfu/aichat/internal/schedule"
@@ -40,6 +41,7 @@ func (w *wiring) startReminderLoop(ctx context.Context) {
 				continue
 			}
 			_ = w.reminderRepo.MarkSent(runCtx, item.ID, now)
+			observability.CountProactiveSent(observability.ProactiveReminder)
 			w.logger.Info("提醒已发送", "reminder_id", item.ID, "scene", item.Scene, "target", item.TargetID)
 		}
 		return nil

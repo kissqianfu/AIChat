@@ -44,35 +44,36 @@ func TestCountersAndLLMObservation(t *testing.T) {
 	CountMessage(port.SceneGroup)
 	CountMessage(port.SceneGroup)
 	CountMessage(port.SceneC2C)
-	if got := testutil.ToFloat64(messagesTotal.WithLabelValues("group")); got != 2 {
+	if got := testutil.ToFloat64(messagesTotal.WithLabelValues(sceneLabel(port.SceneGroup))); got != 2 {
 		t.Fatalf("messages_total{group} = %v, want 2", got)
 	}
-	if got := testutil.ToFloat64(messagesTotal.WithLabelValues("c2c")); got != 1 {
+	if got := testutil.ToFloat64(messagesTotal.WithLabelValues(sceneLabel(port.SceneC2C))); got != 1 {
 		t.Fatalf("messages_total{c2c} = %v, want 1", got)
 	}
 
 	CountReply(port.SceneGroup)
-	if got := testutil.ToFloat64(repliesTotal.WithLabelValues("group")); got != 1 {
+	if got := testutil.ToFloat64(repliesTotal.WithLabelValues(sceneLabel(port.SceneGroup))); got != 1 {
 		t.Fatalf("replies_total{group} = %v, want 1", got)
 	}
 
-	ObserveLLMCall("chat.fast", 100, 20, 1500*time.Millisecond)
-	ObserveLLMCall("asr", -1, -1, time.Second)
-	if got := testutil.ToFloat64(llmCallsTotal.WithLabelValues("chat.fast")); got != 1 {
+	ObserveLLMCall(SlotChatFast, 100, 20, 1500*time.Millisecond)
+	ObserveLLMCall(SlotASR, -1, -1, time.Second)
+	if got := testutil.ToFloat64(llmCallsTotal.WithLabelValues(string(SlotChatFast))); got != 1 {
 		t.Fatalf("llm_calls_total{chat.fast} = %v, want 1", got)
 	}
-	if got := testutil.ToFloat64(llmTokensTotal.WithLabelValues("chat.fast", "prompt")); got != 100 {
+	if got := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotChatFast), string(TokenPrompt))); got != 100 {
 		t.Fatalf("llm_tokens_total{chat.fast,prompt} = %v, want 100", got)
 	}
 	// asr 负 token 不计入。
-	if got := testutil.ToFloat64(llmTokensTotal.WithLabelValues("asr", "prompt")); got != 0 {
+	if got := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotASR), string(TokenPrompt))); got != 0 {
 		t.Fatalf("llm_tokens_total{asr,prompt} = %v, want 0", got)
 	}
 
 	CountToolCall("web_search")
 	CountToolError("web_search")
 	CountToolCacheHit()
-	CountReplyCacheHit()
+	CountReplyCacheLookup(CacheExact)
+	CountReplyCacheHit(CacheExact)
 	CountInterjectSkip()
 	SetQueueDepth(7)
 	SetActiveWindows(3)
@@ -88,16 +89,74 @@ func TestCountersAndLLMObservation(t *testing.T) {
 	}
 }
 
+// TestNewMetrics 覆盖 2026-11-01 新增的丢弃原因/模型失败/缓存查询/端到端耗时/主动消息/回调指标。
+func TestNewMetrics(t *testing.T) {
+	CountDropped(DropGate)
+	CountDropped(DropGate)
+	CountDropped(DropBot)
+	CountLLMError(SlotTTS)
+	CountReplyCacheLookup(CacheSemantic)
+	CountReplyCacheHit(CacheSemantic)
+	ObserveReplyLatency(2 * time.Second)
+	CountProactiveSent(ProactiveReminder)
+	ObserveWebhook(401, 5*time.Millisecond)
+
+	cases := []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		{"dropped{gate}", testutil.ToFloat64(droppedTotal.WithLabelValues(string(DropGate))), 2},
+		{"dropped{bot}", testutil.ToFloat64(droppedTotal.WithLabelValues(string(DropBot))), 1},
+		{"llm_errors{tts}", testutil.ToFloat64(llmErrorsTotal.WithLabelValues(string(SlotTTS))), 1},
+		{"cache_lookups{semantic}", testutil.ToFloat64(replyCacheLookups.WithLabelValues(string(CacheSemantic))), 1},
+		{"cache_hits{semantic}", testutil.ToFloat64(replyCacheHits.WithLabelValues(string(CacheSemantic))), 1},
+		{"proactive_sent{reminder}", testutil.ToFloat64(proactiveSent.WithLabelValues(string(ProactiveReminder))), 1},
+		{"webhook_requests{401}", testutil.ToFloat64(webhookRequests.WithLabelValues(webhookCode(401))), 1},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Fatalf("%s = %v, want %v", c.name, c.got, c.want)
+		}
+	}
+	// 直方图有观测即出现一条时间序列。
+	if got := testutil.CollectAndCount(replyLatency); got != 1 {
+		t.Fatalf("reply_latency 序列数 = %d, want 1", got)
+	}
+	if got := testutil.CollectAndCount(webhookLatency); got != 1 {
+		t.Fatalf("webhook_latency 序列数 = %d, want 1", got)
+	}
+}
+
 func TestInstrumentChatModelRecords(t *testing.T) {
 	inner := &fakeChatModel{resp: fakeResp("hi", 12, 3)}
-	m := InstrumentChatModel(inner, "chat.strong")
+	m := InstrumentChatModel(inner, SlotChatStrong)
 	if _, err := m.Chat(t.Context(), fakeReq()); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
-	if got := testutil.ToFloat64(llmCallsTotal.WithLabelValues("chat.strong")); got != 1 {
+	if got := testutil.ToFloat64(llmCallsTotal.WithLabelValues(string(SlotChatStrong))); got != 1 {
 		t.Fatalf("llm_calls_total{chat.strong} = %v, want 1", got)
 	}
-	if got := testutil.ToFloat64(llmTokensTotal.WithLabelValues("chat.strong", "completion")); got != 3 {
+	if got := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotChatStrong), string(TokenCompletion))); got != 3 {
 		t.Fatalf("llm_tokens_total{chat.strong,completion} = %v, want 3", got)
 	}
+	// 调用失败要计入 llm_errors（ASR/TTS/画图失败率依赖这个）。
+	failing := InstrumentChatModel(&failChatModel{}, SlotVision)
+	if _, err := failing.Chat(t.Context(), fakeReq()); err == nil {
+		t.Fatal("failChatModel 应返回错误")
+	}
+	if got := testutil.ToFloat64(llmErrorsTotal.WithLabelValues(string(SlotVision))); got != 1 {
+		t.Fatalf("llm_errors_total{vision} = %v, want 1", got)
+	}
+}
+
+// failChatModel 是永远失败的模型桩。
+type failChatModel struct{}
+
+func (*failChatModel) Chat(context.Context, port.ChatRequest) (*port.ChatResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (*failChatModel) Stream(context.Context, port.ChatRequest) (port.ChatStream, error) {
+	return nil, errNotImplemented
 }

@@ -19,7 +19,15 @@ import (
 type ReplyCache interface {
 	Lookup(ctx context.Context, ev port.Event, text string) (string, bool)
 	Store(ctx context.Context, ev port.Event, text, reply string)
+	// Kind 返回缓存类型（取值见 KindExact/KindSemantic），指标按类型分桶。
+	Kind() string
 }
+
+// 缓存类型词表（ReplyCache.Kind 的取值，也是指标 kind label 的来源）。
+const (
+	KindExact    = "exact"
+	KindSemantic = "semantic"
+)
 
 // Exact 是"规范化精确命中"缓存（复用 LRU+TTL）。
 type Exact struct {
@@ -44,6 +52,9 @@ func (e *Exact) Lookup(ctx context.Context, ev port.Event, text string) (string,
 func (e *Exact) Store(ctx context.Context, ev port.Event, text, reply string) {
 	_ = e.cache.Set(ctx, replyKey(ev, text), []byte(reply), 10*time.Minute)
 }
+
+// Kind 实现 ReplyCache。
+func (e *Exact) Kind() string { return KindExact }
 
 // replyKey 用 scene/target/text 哈希（不落原文）。
 func replyKey(ev port.Event, text string) string {
@@ -91,6 +102,9 @@ func newSemantic(clk clock.Clock, threshold float64, embedFn EmbedFunc) *Semanti
 	}
 	return &Semantic{clk: clk, entries: make(map[string][]semanticEntry), max: 256, ttl: 10 * time.Minute, threshold: threshold, embedFn: embedFn}
 }
+
+// Kind 实现 ReplyCache。
+func (s *Semantic) Kind() string { return KindSemantic }
 
 // Lookup 找同 scope 下最相似的未过期回复。
 func (s *Semantic) Lookup(ctx context.Context, ev port.Event, query string) (string, bool) {

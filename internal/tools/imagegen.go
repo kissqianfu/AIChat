@@ -93,7 +93,7 @@ func (t *ImageGenTool) Invoke(ctx context.Context, args json.RawMessage) (port.T
 	clk := clock.System()
 	start := clk.Now()
 	data, mime, err := t.gen(ctx, prompt)
-	observability.ObserveLLMCall("imagegen", -1, -1, clk.Now().Sub(start)) // 画图无 token
+	observability.ObserveMediaCall(observability.SlotImageGen, start, err)
 	if err != nil {
 		t.log.Warn("图像生成失败", "err", err)
 		return port.ToolResult{Content: "这张没画出来，换个描述试试。"}, nil

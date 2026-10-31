@@ -44,6 +44,10 @@ var (
 		Name: "aichat_llm_tokens_total",
 		Help: "模型 token 用量（kind: prompt/completion；仅 chat 系，asr/tts/imagegen 无 token）",
 	}, []string{"slot", "kind"})
+	llmErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_llm_errors_total",
+		Help: "模型调用失败数（按槽位；ASR/TTS/画图失败率看这里）",
+	}, []string{"slot"})
 	llmLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "aichat_llm_latency_seconds",
 		Help:    "模型调用耗时",
@@ -61,10 +65,14 @@ var (
 		Name: "aichat_tool_cache_hits_total",
 		Help: "工具结果缓存命中数",
 	})
-	replyCacheHits = promauto.NewCounter(prometheus.CounterOpts{
+	replyCacheLookups = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_reply_cache_lookups_total",
+		Help: "回复缓存查询数（kind: exact/semantic；与 hits 相除得命中率）",
+	}, []string{"kind"})
+	replyCacheHits = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "aichat_reply_cache_hits_total",
-		Help: "回复缓存命中数（精确+语义）",
-	})
+		Help: "回复缓存命中数（kind: exact/semantic）",
+	}, []string{"kind"})
 	interjectSkipTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "aichat_interject_skip_total",
 		Help: "模型 [SKIP] 自决沉默次数",
@@ -76,6 +84,28 @@ var (
 	activeWindows = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "aichat_active_windows",
 		Help: "活跃会话窗口数（回复后 3 分钟内）",
+	})
+	droppedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_dropped_total",
+		Help: "消息未回原因（reason: bot/banned/cmd/leak/record/gate/guard/empty/budget）",
+	}, []string{"reason"})
+	replyLatency = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "aichat_reply_latency_seconds",
+		Help:    "端到端回复耗时（收到消息到发送成功）",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60},
+	})
+	proactiveSent = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_proactive_sent_total",
+		Help: "主动消息发出数（kind: fallback=额度耗尽转主动 / reminder=定时提醒）",
+	}, []string{"kind"})
+	webhookRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_webhook_requests_total",
+		Help: "平台回调请求数（code: HTTP 状态码；401/403=验签失败，5xx=处理出错）",
+	}, []string{"code"})
+	webhookLatency = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "aichat_webhook_latency_seconds",
+		Help:    "平台回调处理耗时（超时会触发平台重推）",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 	})
 )
 
@@ -105,8 +135,40 @@ func CountToolError(name string) { toolErrorsTotal.WithLabelValues(name).Inc() }
 // CountToolCacheHit 计数工具结果缓存命中。
 func CountToolCacheHit() { toolCacheHits.Inc() }
 
+// CountReplyCacheLookup 计数回复缓存查询。
+func CountReplyCacheLookup(kind CacheKind) { replyCacheLookups.WithLabelValues(string(kind)).Inc() }
+
 // CountReplyCacheHit 计数回复缓存命中。
-func CountReplyCacheHit() { replyCacheHits.Inc() }
+func CountReplyCacheHit(kind CacheKind) { replyCacheHits.WithLabelValues(string(kind)).Inc() }
+
+// CountDropped 计数一条未获回复的消息（reason 见 labels.go）。
+func CountDropped(reason DropReason) { droppedTotal.WithLabelValues(string(reason)).Inc() }
+
+// CountLLMError 计数一次模型调用失败（slot 见 labels.go）。
+func CountLLMError(slot LLMSlot) { llmErrorsTotal.WithLabelValues(string(slot)).Inc() }
+
+// ObserveReplyLatency 记一次端到端回复耗时（收到消息到发送成功）。
+func ObserveReplyLatency(d time.Duration) { replyLatency.Observe(d.Seconds()) }
+
+// CountProactiveSent 计数主动消息发出（kind 见 labels.go）。
+func CountProactiveSent(kind ProactiveKind) {
+	proactiveSent.WithLabelValues(string(kind)).Inc()
+}
+
+// ObserveWebhook 记一次平台回调：HTTP 状态码 + 处理耗时（格式化收在本包内）。
+func ObserveWebhook(code int, d time.Duration) {
+	webhookRequests.WithLabelValues(webhookCode(code)).Inc()
+	webhookLatency.Observe(d.Seconds())
+}
+
+// ObserveMediaCall 包一次媒体能力调用（asr/tts/imagegen 无 token）：
+// 记次数与耗时，失败额外记 llm_errors。start 由调用方用 clock 提供。
+func ObserveMediaCall(slot LLMSlot, start time.Time, err error) {
+	ObserveLLMCall(slot, -1, -1, metricClock.Now().Sub(start))
+	if err != nil {
+		CountLLMError(slot)
+	}
+}
 
 // CountInterjectSkip 计数模型 [SKIP] 自决沉默。
 func CountInterjectSkip() { interjectSkipTotal.Inc() }
@@ -118,15 +180,16 @@ func SetQueueDepth(n int) { queueDepth.Set(float64(n)) }
 func SetActiveWindows(n int) { activeWindows.Set(float64(n)) }
 
 // ObserveLLMCall 记一次模型调用：次数 + 耗时 + token（token 负值 = 不计）。
-// kind 是槽位/能力名：chat.fast / chat.strong / vision / asr / tts / imagegen。
-func ObserveLLMCall(kind string, promptTok, completionTok int, latency time.Duration) {
-	llmCallsTotal.WithLabelValues(kind).Inc()
-	llmLatency.WithLabelValues(kind).Observe(latency.Seconds())
+// slot 见 labels.go 的 LLMSlot 常量。
+func ObserveLLMCall(slot LLMSlot, promptTok, completionTok int, latency time.Duration) {
+	s := string(slot)
+	llmCallsTotal.WithLabelValues(s).Inc()
+	llmLatency.WithLabelValues(s).Observe(latency.Seconds())
 	if promptTok >= 0 {
-		llmTokensTotal.WithLabelValues(kind, "prompt").Add(float64(promptTok))
+		llmTokensTotal.WithLabelValues(s, string(TokenPrompt)).Add(float64(promptTok))
 	}
 	if completionTok >= 0 {
-		llmTokensTotal.WithLabelValues(kind, "completion").Add(float64(completionTok))
+		llmTokensTotal.WithLabelValues(s, string(TokenCompletion)).Add(float64(completionTok))
 	}
 }
 
@@ -136,16 +199,21 @@ func MetricsHandler() http.Handler { return promhttp.Handler() }
 // instrumentedChatModel 给槽位模型套打点装饰（registry.ChatModel 出口统一包）。
 type instrumentedChatModel struct {
 	inner port.ChatModel
-	slot  string
+	slot  LLMSlot
 }
 
 func (m *instrumentedChatModel) Chat(ctx context.Context, req port.ChatRequest) (*port.ChatResponse, error) {
 	start := metricClock.Now()
 	resp, err := m.inner.Chat(ctx, req)
 	elapsed := metricClock.Now().Sub(start)
-	if err != nil || resp == nil {
+	if err != nil {
+		CountLLMError(m.slot)
 		ObserveLLMCall(m.slot, -1, -1, elapsed)
 		return resp, err
+	}
+	if resp == nil {
+		ObserveLLMCall(m.slot, -1, -1, elapsed)
+		return resp, nil
 	}
 	ObserveLLMCall(m.slot, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, elapsed)
 	return resp, err
@@ -155,10 +223,13 @@ func (m *instrumentedChatModel) Stream(ctx context.Context, req port.ChatRequest
 	start := metricClock.Now()
 	stream, err := m.inner.Stream(ctx, req)
 	ObserveLLMCall(m.slot, -1, -1, metricClock.Now().Sub(start)) // 流式 token 不好聚合，只记次数与耗时
+	if err != nil {
+		CountLLMError(m.slot)
+	}
 	return stream, err
 }
 
 // InstrumentChatModel 给模型套槽位打点装饰（registry 包内部使用）。
-func InstrumentChatModel(model port.ChatModel, slot string) port.ChatModel {
+func InstrumentChatModel(model port.ChatModel, slot LLMSlot) port.ChatModel {
 	return &instrumentedChatModel{inner: model, slot: slot}
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/kissqianfu/QQ-SDK/event"
 	sdkwebhook "github.com/kissqianfu/QQ-SDK/transport/webhook"
 
+	"github.com/kissqianfu/aichat/internal/observability"
+	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/storage/db/repo"
 )
 
@@ -57,8 +59,36 @@ func New(cfg Config) (*Handler, error) {
 	return &Handler{inner: inner}, nil
 }
 
-// ServeHTTP 实现 http.Handler。
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.inner.ServeHTTP(w, r) }
+// ServeHTTP 实现 http.Handler，并顺带打点（状态码 + 处理耗时）：
+// 401/403 多为验签失败，5xx 为处理出错；平台回调超时会触发重推。
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := clock.System().Now()
+	rec := &statusRecorder{ResponseWriter: w, code: http.StatusOK}
+	h.inner.ServeHTTP(rec, r)
+	observability.ObserveWebhook(rec.code, clock.System().Now().Sub(start))
+}
+
+// statusRecorder 记录写出的状态码（未显式 WriteHeader 时为 200）。
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+}
+
+// WriteHeader 记录状态码后透传。
+func (s *statusRecorder) WriteHeader(code int) {
+	s.code = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// Flush 透传（SDK 若做流式响应不会失效）。
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap 让 http.ResponseController 取到原始 writer。
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // PublicKey 返回验签公钥（自检/测试用）。
 func (h *Handler) PublicKey() ed25519.PublicKey { return h.inner.PublicKey() }
