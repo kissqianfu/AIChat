@@ -1,0 +1,126 @@
+# aichat 运行配置（不含任何密钥）
+#
+# 结构以 docs/02 §7 为准。密钥位置：
+#   - app_id / app_secret / owner openid → bot_secret 表（启动前用 `key` 指令或 CLI 注入）
+#   - 模型供应商 Key              → api_key 表
+#   - 认证码 HMAC 密钥            → bot_secret 表（启动时自动生成，不需要配置）
+#
+# 所有字段都有默认值（internal/config.Default），这里只写要改的项；本文件由 internal/config 加载并校验。
+
+app:
+  log_level: info             # debug | info | warn | error（日志恒为 JSON 格式，无环境开关）
+  # log_file: /var/log/aichat.log  # 日志文件：空 = 只进 stderr（journald）；配置了 = 文件+stderr 双写（append，不轮转）
+  # pid_file: /var/run/aichat.pid  # PID 文件：空 = 不写；配置了 = 启动写入、退出删除
+  timezone: Asia/Shanghai     # 必填，缺失拒绝启动（docs/09 §5.2）
+
+bot:
+  transport: webhook          # websocket | webhook | both
+  # intents 不再配置（2026-10-31）：固定 group_and_c2c + interaction，写死在 bootstrap。
+  # 本项目不接沙箱，只有正式环境（无 sandbox 开关）
+  # app_id / app_secret 不在这里：存 bot_secret 表（qq_app_id / qq_app_secret）
+
+db:
+  driver: sqlite              # sqlite | postgres ← 唯一切换开关
+  sqlite:
+    path: ./data/aichat.db
+    busy_timeout: 5s          # 写锁等待，超时报错而不是吞掉
+  postgres:
+    dsn: ${PG_DSN}            # 含密码，只走 env，不写进配置文件
+    max_open_conns: 10
+    max_idle_conns: 4
+  backup_dir: ./data/backup
+  auto_migrate: true          # 启动迁移到最新；失败拒绝启动
+
+# admin 段已移除：认证码 HMAC 密钥启动时随机生成并写入 bot_secret 表（admin_code_secret 键）。
+# commands 段已移除（2026-10-31）：/g 选群删除后 scope_ttl 无消费者。
+
+persona:
+  dir: ./persona
+  file_text: persona.md
+  file_meta: persona.yaml
+  watch: true
+  max_bytes: 65536
+
+webhook:
+  addr: "127.0.0.1:23015"     # 只监听回环；公网由 Nginx 反代（TLS 在 Nginx 终止，应用内不做 TLS）
+  path: /aichat/webhook
+
+# llm / cache 段已移除：模型槽位在下方 models 段（2026-10-31 起 models.yaml 并入本文件）；
+# 回复缓存为内存 LRU，无可调参数。
+
+memory:
+  importance_archive: 0.55
+  r_archive: 0.20
+  consolidate_cron: "0 3 * * *"
+  episode_turns: 6           # 每 6 轮生成一条情景记忆（0 = 关闭，M7-6b）
+  relationship_turns: 15     # 每 15 条群消息更新一次关系印象（0 = 关闭，R4-3）
+
+emotion:
+  max_daily_delta: 0.6        # 单日累计波动上限（M7-7 安全阀）；其余情绪参数为代码常量
+
+interject:
+  enabled: false              # 自主插话（群普通消息经 chat.fast 打分 ≥ threshold 才回）
+  threshold: 0.5
+
+hours:                        # 默认分时段规则（docs/09 §3.1）；临时改档走 /hours 指令
+  # windows 列表——days 命中的日子里，range 区间内进 tier 档，按顺序首中即返回
+  # days: ISO 星期，1=周一 … 7=周日；"1-5" 区间、"1,3,5" 列表、"*" 或空 = 每天
+  # 整段不写（或 windows 为空）= 内置默认：工作日 09:00-18:00 = work、每日 23:00-07:00 = night
+  windows:
+    - { days: "1-5", range: "09:00-18:00", tier: work }
+    - { days: "*",     range: "23:00-07:00", tier: night }   # 跨零点
+    # - { days: "6",  range: "14:00-16:00", tier: maint }     # 例：周六下午维护
+
+sticker:
+  enabled: true              # 收到图片时归档为表情包（M7-1 收/存）
+  max_bytes: 2097152         # 单张上限 2MB，超过不入库
+
+imagegen:
+  enabled: false             # 默认关（成本）；模型经 image_gen 工具自行判断（按用户日配额）
+  max_per_day: 10            # 每人每天上限
+
+# 模型槽位（2026-10-31 由 models.yaml 并入，docs/08 §2.5）：
+# 每个引用自带 base_url 与 api_key_name（→ api_key 表的 name），不再有 providers 中转。
+# 能力槽位可选 protocol：asr = openai（默认）/ qianwen；tts = elevenlabs（默认）/ breeze（mp3 直传免 silk）。
+# 对话/视觉槽位走 OpenAI 兼容协议；embed/asr/imagegen/tts 的 base_url 留空 = 该能力关闭。${ENV} 会展开。
+# 热加载：改本段后 1s 内生效（失败保留旧版），/reload 也可手动触发（保留 5 层快照可回滚）。
+models:
+  # 对话槽位（复杂度判别与插话打分也用 chat.fast）
+  chat:   
+    # 日常闲聊；默认槽位
+    fast:                         
+      primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
+    # 复杂推理/长文
+    strong:                       
+      primary: { base_url: https://api.deepseek.com, model: deepseek-v4-pro, api_key_name: deepseek }
+
+  # 视觉理解：DeepSeek 只有 flash 支持图片（且图片只能出现在 user 消息）
+  vision:
+    primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
+
+  
+  # embed 向量化
+  embed:
+    primary: { base_url: "", model: text-embedding-3-small, api_key_name: openai }
+  # 语音识别 base_url 留空 = 该能力关闭
+  asr:
+    primary: { base_url: "", model: whisper-1, api_key_name: openai }
+  # 语音合成 base_url 留空 = 该能力关闭
+  tts:
+    primary: { base_url: "", model: eleven_turbo_v2_5, voice: "", api_key_name: elevenlabs }
+  # 图像生成 base_url 留空 = 该能力关闭
+  imagegen:
+    primary: { base_url: "", model: dall-e-3, size: 1024x1024, api_key_name: openai }
+  # 联网搜索（web_search）/抓取（web_fetch）：无需 model 名；base_url 留空 = 默认 api.deepseek.com + 密钥 deepseek。
+  # protocol: deepseek = web_fetch 走官方 Fetch 接口（服务端渲染 + Markdown，¥5/千次，失败自动回退直连）
+  search:
+    primary: { base_url: https://api.deepseek.com, api_key_name: deepseek, protocol: deepseek }
+
+
+# 配置级灰度开关（M4-6）：改这里 + 重启即可关掉某能力
+features:
+  cache: true            # 模型回复短期缓存（M4-5）
+  memory_extract: true   # 异步记忆抽取（M2-2）
+  tools: true            # 工具调用（M1-9）
+  semantic_cache: true   # 向量语义缓存（本地 bigram 向量；M5 可换 embedding 模型）
+  followup: true         # 补一句（P1 拟人化）：回复后 45-150s 经四重刹车再判断是否补一句

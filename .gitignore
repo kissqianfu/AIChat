@@ -1,0 +1,37 @@
+# 构建产物（单二进制 ./aichat）
+/aichat
+/aichat.exe
+*.exe
+*.test
+*.out
+cover.out
+/cover
+cover.*
+
+# 运行时数据：SQLite 库 / 媒体 / 备份，绝不进 git（05 §12）
+/data/
+
+# 本地配置覆盖：可能含密钥，绝不进 git（08 §2.8）
+/*.local.yaml
+/config.local.yaml
+/models.local.yaml
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+_local/
+data/
+config.local.yaml
+
+# 本地文档与运维资产：只留本地，不上传 git
+/docs/
+/DEV_PROMPT.md
+/deploy/
+/scripts/
+/test/

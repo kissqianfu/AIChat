@@ -1,0 +1,89 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - depguard
+    - dupl
+    - errcheck
+    - forbidigo
+    - funlen
+    - gocognit
+    - gocyclo
+    - govet
+    - misspell
+    - revive
+    - sqlclosecheck
+    - staticcheck
+  settings:
+    dupl:
+      threshold: 100
+    funlen:
+      lines: 60
+      statements: 40
+    gocognit:
+      min-complexity: 20
+    gocyclo:
+      min-complexity: 15
+    staticcheck:
+      checks:
+        - all
+    depguard:
+      rules:
+        business:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/internal/bootstrap/**"
+            - "!**/cmd/**"
+          deny:
+            - pkg: "github.com/kissqianfu/aichat/internal/admin"
+              desc: "业务包不得反向依赖 admin（权限判定必须集中，docs/10 §5）"
+        ingress:
+          files:
+            - "**/internal/ingress/**"
+          deny:
+            - pkg: "github.com/kissqianfu/aichat/internal/orchestrator"
+              desc: "接入层不得依赖编排层（可拆卸要求，docs/04）"
+        pure:
+          files:
+            - "**/internal/render/**"
+            - "**/internal/platform/**"
+            - "**/internal/port/**"
+          deny:
+            - pkg: "github.com/kissqianfu/aichat/internal/storage"
+              desc: "纯逻辑层不得依赖存储（docs/10 §5）"
+    forbidigo:
+      forbid:
+        - pattern: '\btime\.Now\(\)'
+          msg: "用 platform/clock，禁止裸 time.Now（docs/10 §4.3）"
+        - pattern: '\bos\.Getenv\('
+          msg: "配置统一走 internal/config，禁止散读环境变量（docs/10 §6）"
+        - pattern: '\bfmt\.Print'
+          msg: "用 slog，禁止直接打印（docs/10 §6）"
+  exclusions:
+    generated: lax
+    rules:
+      - path: internal/platform/clock/
+        linters:
+          - forbidigo
+      - path: internal/config/
+        # 配置包是唯一允许读环境变量的地方（${ENV} 展开），其余包禁止 os.Getenv。
+        linters:
+          - forbidigo
+      - path: _test\.go
+        linters:
+          - dupl
+          - funlen
+          - gocognit
+          - gocyclo
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/kissqianfu/aichat

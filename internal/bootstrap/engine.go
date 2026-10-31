@@ -1,0 +1,244 @@
+// engine.go：编排引擎装配——工具箱、准入闸门、档位策略、调用日志、工具上下文、orchestrator、回复缓存。
+package bootstrap
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/kissqianfu/aichat/internal/cache"
+	"github.com/kissqianfu/aichat/internal/limits"
+	"github.com/kissqianfu/aichat/internal/media"
+	"github.com/kissqianfu/aichat/internal/orchestrator"
+	"github.com/kissqianfu/aichat/internal/port"
+	"github.com/kissqianfu/aichat/internal/render"
+	"github.com/kissqianfu/aichat/internal/schedule"
+	"github.com/kissqianfu/aichat/internal/sticker"
+	"github.com/kissqianfu/aichat/internal/storage/db/repo"
+	"github.com/kissqianfu/aichat/internal/tools"
+)
+
+// newReplyCache 按功能开关选择缓存实现：语义（有向量）/语义（本地）/精确。
+// 阈值两档：本地 bigram 余弦分布偏低用 0.45；真实 embedding 语义相近即可达 0.6+，
+// 用 0.82 只命中几乎同问的问题——避免"换说法就复读同一句"的人机感（2026-11-01）。
+func (w *wiring) newReplyCache() cache.ReplyCache {
+	if !w.cfg.Features["cache"] {
+		return nil
+	}
+	if w.cfg.Features["semantic_cache"] && w.embedOne != nil {
+		return cache.NewSemanticWithEmbedder(w.clk, 0.82, w.embedOne)
+	}
+	if w.cfg.Features["semantic_cache"] {
+		return cache.NewSemantic(w.clk, 0.45)
+	}
+	return cache.NewExact(w.clk, 2048)
+}
+
+// buildToolbox 注册全部工具（docs/01 §4）；语音与看图按配置/槽位可选。
+
+// buildToolbox 注册全部工具（docs/01 §4）；语音与看图按配置/槽位可选。
+func (w *wiring) buildToolbox(ctx context.Context) error {
+	toolbox := tools.New()
+	w.toolbox = toolbox
+	if !w.cfg.Features["tools"] {
+		return nil
+	}
+	if err := toolbox.Register(tools.NewTimeTool(w.clk, w.cfg.App.Timezone)); err != nil {
+		return fmt.Errorf("bootstrap: 注册时间工具: %w", err)
+	}
+	if err := toolbox.Register(tools.NewCalculatorTool()); err != nil {
+		return fmt.Errorf("bootstrap: 注册计算工具: %w", err)
+	}
+	// 联网搜索（2026-10-31）：models.search 槽位配置 base_url/api_key_name；
+	// 槽位缺失或 base_url 为空 = 沿用历史默认（api.deepseek.com + 密钥 deepseek）。
+	// protocol: deepseek 时 web_fetch 走官方 Fetch 接口（服务端渲染 + Markdown，失败回退直连）。
+	searchBaseURL, searchKeyName := "", "deepseek"
+	if ref, ok := w.reg.SlotModel("search"); ok && ref.BaseURL != "" {
+		searchBaseURL, searchKeyName = ref.BaseURL, ref.APIKeyName
+	}
+	searchKey := func(ctx context.Context) (string, error) { return w.keyRepo.Key(ctx, searchKeyName) }
+	fetchBackend := tools.FetchBackend(nil)
+	if ref, ok := w.reg.SlotModel("search"); ok && strings.EqualFold(strings.TrimSpace(ref.Protocol), "deepseek") {
+		fetchBackend = tools.NewDeepseekFetch(searchKey, searchBaseURL, nil)
+	}
+	if err := toolbox.Register(tools.NewSearchTool(searchKey, searchBaseURL, nil)); err != nil {
+		return fmt.Errorf("bootstrap: 注册搜索工具: %w", err)
+	}
+	if err := toolbox.Register(tools.NewWebFetchToolWithBackend(fetchBackend, nil)); err != nil {
+		return fmt.Errorf("bootstrap: 注册抓取工具: %w", err)
+	}
+	if err := toolbox.Register(tools.NewMemorySearchTool(w.memoryRepo)); err != nil {
+		return fmt.Errorf("bootstrap: 注册记忆检索工具: %w", err)
+	}
+	if err := toolbox.Register(tools.NewMemoryWriteTool(w.memoryRepo)); err != nil {
+		return fmt.Errorf("bootstrap: 注册记忆写入工具: %w", err)
+	}
+	if err := toolbox.Register(tools.NewStickerPickTool(w.stickerRepo, w.logger)); err != nil {
+		return fmt.Errorf("bootstrap: 注册表情包工具: %w", err)
+	}
+	if err := toolbox.Register(tools.NewReminderTool(w.reminderRepo, w.clk)); err != nil {
+		return fmt.Errorf("bootstrap: 注册提醒工具: %w", err)
+	}
+	// 语音（M7-3b / docs/08 §3.9）：models.tts 槽位 base_url 与 voice 非空才注册；否则只告警不阻塞启动。
+	if ref, ok := w.reg.SlotModel("tts"); ok && ref.Voice != "" {
+		if engine, err := newVoiceEngine(ctx, w.reg, w.keyRepo, w.logger); err != nil {
+			w.logger.Warn("语音工具未启用", "err", err)
+		} else if err := toolbox.Register(tools.NewVoiceTool(engine)); err != nil {
+			return fmt.Errorf("bootstrap: 注册语音工具: %w", err)
+		}
+	}
+	// 视觉理解：models.vision 槽位存在才注册（否则不向模型暴露该工具）。
+	if _, ok := w.reg.SlotModel("vision"); ok {
+		visionModel := func(ctx context.Context) (port.ChatModel, error) {
+			return w.reg.ChatModel(ctx, "vision")
+		}
+		downloader := media.New(nil)
+		if err := toolbox.Register(tools.NewImageUnderstandTool(visionModel, downloader.Download)); err != nil {
+			return fmt.Errorf("bootstrap: 注册看图工具: %w", err)
+		}
+	}
+	// 画图（2026-10-31：/draw 指令移除，改 image_gen 工具，画图能力默认开、模型自行判断；
+	// config imagegen.enabled + models.imagegen 槽位（base_url 非空）齐才注册）。
+	if w.cfg.ImageGen.Enabled {
+		genFn := imageGenFnFor(openAIForSlot(w.reg, w.keyRepo, "imagegen"), w.imageModel, w.imageSize)
+		if genFn == nil {
+			w.logger.Warn("imagegen.enabled=true 但 models.imagegen 槽位未配置（base_url 空），画图工具未启用")
+		} else {
+			taker := &drawQuotaTaker{repo: repo.NewProactiveRepo(w.store, w.clk)}
+			if err := toolbox.Register(tools.NewImageGenTool(genFn, taker, w.cfg.ImageGen.MaxPerDay, w.logger)); err != nil {
+				return fmt.Errorf("bootstrap: 注册画图工具: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// buildGate 构造准入闸门（点名判定 + 活跃窗口 + 插话自决）。
+func (w *wiring) buildGate() *orchestrator.Gate {
+	return orchestrator.NewGate(orchestrator.GateConfig{
+		SelfName: w.self.Username,
+		Aliases:  w.persona.Aliases,
+		// features.interject=true：群普通消息（没点名）也全量进主模型，
+		// 由模型输出 [SKIP] 自决插不插话（不再走打分闸）。
+		GroupAutoReply: w.cfg.Features["interject"],
+		Clock:          w.clk,
+	})
+}
+
+// policyResolver 把群事件映射到群级分时段判定（docs/09 §5.1）。
+
+// policyResolver 把群事件映射到群级分时段判定（docs/09 §5.1）。
+func (w *wiring) policyResolver() func(context.Context, port.Event) (schedule.Policy, error) {
+	return func(ctx context.Context, ev port.Event) (schedule.Policy, error) {
+		groupID := ""
+		if ev.Scene == port.SceneGroup {
+			groupID = ev.TargetID
+		}
+		return w.scheduler.Resolve(ctx, groupID)
+	}
+}
+
+// callLogger 记录一次 LLM 调用成本（价格常量见 llmCostMicros，M7-9/0014）。
+
+// callLogger 记录一次 LLM 调用成本（价格常量见 llmCostMicros，M7-9/0014）。
+func (w *wiring) callLogger() func(context.Context, port.Event, int, int, string) {
+	return func(ctx context.Context, ev port.Event, prompt, completion int, finish string) {
+		_ = w.logsRepo.InsertLLM(ctx, ev.ID, "chat", prompt, completion, finish, llmCostMicros(prompt, completion))
+	}
+}
+
+// toolContext 注入事件、RBAC 角色与当前占优情绪（sticker_pick 权重用，P3 拟人化）。
+
+// toolContext 注入事件、RBAC 角色与当前占优情绪（sticker_pick 权重用，P3 拟人化）。
+func (w *wiring) toolContext() func(context.Context, port.Event) context.Context {
+	return func(ctx context.Context, ev port.Event) context.Context {
+		ctx = tools.WithEvent(ctx, ev)
+		if mood := w.moodKeyOf(ctx, ev); mood != "" {
+			ctx = tools.WithMood(ctx, mood)
+		}
+		return tools.WithRole(ctx, toolRole(ctx, ev, w.secretRepo, w.adminRepo))
+	}
+}
+
+// buildStickerCollector 构造表情包收集器（含自动标注）。
+//
+// 标注模式二选一：models.vision 槽位在 → 看图打情绪+内容标签（首选）；
+// 否则 chat.fast 按发送配文判情绪（降级，不打内容标签）；都没有 = 只收集不标注。
+func (w *wiring) buildStickerCollector() *sticker.Collector {
+	// 表情包收集开关全局（config sticker.enabled，2026-10-31：/g /gconfig 移除）；nil allow = 全允许。
+	collector := sticker.NewCollector(w.stickerRepo, nil, w.cfg.Sticker.MaxBytes, w.clk, w.logger)
+	switch {
+	case w.hasSlot("vision"):
+		collector = collector.WithAnnotator(sticker.NewVisionAnnotator(func(ctx context.Context) (port.ChatModel, error) {
+			return w.reg.ChatModel(ctx, "vision")
+		}, w.logger))
+		w.logger.Info("表情包自动标注已启用", "mode", "vision")
+	case w.hasSlot("chat.fast"):
+		collector = collector.WithAnnotator(sticker.NewTextAnnotator(func(ctx context.Context) (port.ChatModel, error) {
+			return w.reg.ChatModel(ctx, "chat.fast")
+		}, w.logger))
+		w.logger.Info("表情包自动标注已启用", "mode", "text")
+	}
+	return collector
+}
+
+// hasSlot 判断槽位是否存在（热加载后槽位可能增减，这里只在启动时判断一次；
+// 标注失败只告警不重试，代价是新增槽位需重启生效——可接受）。
+func (w *wiring) hasSlot(name string) bool {
+	_, ok := w.reg.SlotModel(name)
+	return ok
+}
+
+// buildOrchestrator 组装准入闸门与编排器（消息处理核心）。
+func (w *wiring) buildOrchestrator() (*orchestrator.Orchestrator, error) {
+	var stickerCollector orchestrator.StickerCollector
+	if w.cfg.Sticker.Enabled {
+		stickerCollector = w.buildStickerCollector()
+	}
+	orch, err := orchestrator.New(orchestrator.Config{
+		ModelFor: w.modelRouter.ModelFor,
+		Persona:  w.persona.Render(w.self.Username),
+		PersonaProvider: func() string {
+			// 热重载/watch 路径：每次取快照后渲染身份占位符（{{name}}/{{aliases}}）。
+			cur := w.personaStore.Current()
+			return cur.Render(w.self.Username)
+		},
+		Logger:            w.logger,
+		History:           w.messageRepo,
+		Recorder:          w.messageRepo,
+		Budget:            w.budget,
+		Renderer:          render.New(),
+		Capability:        port.Capability{Text: true, Markdown: true, Reference: true, CmdHint: true, ChunkMax: 1800},
+		Gate:              w.buildGate(),
+		Toolbox:           &loggingToolbox{inner: w.toolbox, repo: w.logsRepo},
+		Memory:            w.memoryRepo,
+		Embed:             w.embedOne,
+		Extractor:         w.memExtractor,
+		Episode:           w.episodeEngine,
+		EpisodeTurns:      w.cfg.Memory.EpisodeTurns,
+		RecentEpisodes:    w.episodeEngine.RecentEpisodes,
+		Relationship:      w.relEngine,
+		RelationshipTurns: w.cfg.Memory.RelationshipTurns,
+		RelationshipOf:    w.relationshipOf(),
+		GroupStatsOf:      w.groupStatsOf(),
+		Streamer:          &replyStreamer{adapter: w.sender, budget: w.budget},
+		Emotion:           newEmotionAdapter(w.emotionEngine),
+		Media:             media.NewPersister(media.New(nil), "data/media"),
+		Sticker:           stickerCollector,
+		Cache:             w.replyCache,
+		Guard:             &guardAdapter{guard: limits.NewDefaultGuard(w.clk)},
+		Transcriber:       transcriberFor(openAIForSlot(w.reg, w.keyRepo, "asr"), w.asrModel, asrProtocolOf(w.reg)),
+		Policy:            w.policyResolver(),
+		Proactive:         w.proactive.Allow,
+		Clock:             w.clk,
+		CallLog:           w.callLogger(),
+		ToolContext:       w.toolContext(),
+		Profile:           w.profileOf(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: 构造 orchestrator: %w", err)
+	}
+	return orch, nil
+}
+
+// ownerNotifier 给 owner 发私聊告警（认证码泄露等场景，docs/01 §6.3）。

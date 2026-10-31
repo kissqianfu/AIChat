@@ -1,0 +1,17 @@
+version: "2026.10.31-5"    # 改内容就改它；/status 会显示
+baseline:                  # 七情基线，情绪衰减回落到这里
+  joy: 0.35
+  anger: 0.05
+  sorrow: 0.10
+  fear: 0.10
+  love: 0.40
+  disgust: 0.05
+  desire: 0.30
+style:
+  sentence_len: 18         # 平均句长（字）
+  emoji_prob: 0.25         # 每条带表情的概率
+  exclaim_max: 2
+  initiative: 0.5          # 主动性 0~1
+sticker_allow: true
+aliases:                   # 唤醒词别名（主昵称来自 /users/@me）
+  - 大肥鱼
