@@ -165,8 +165,8 @@ func (o *Orchestrator) Reply(ctx context.Context, ev port.Event) (port.Outbound,
 // 按四个阶段拆分（F8 收敛）：shortCircuit（语音/安全/显式记忆短路）→
 // GuardAllows → resolvePolicy（含 maint 短路）→ cachedPath → generateReply。
 func (o *Orchestrator) Replies(ctx context.Context, ev port.Event) ([]port.Outbound, error) {
-	if !o.allowed(ctx, ev) {
-		observability.CountDropped(observability.DropGate)
+	if allowed, reason := o.allowed(ctx, ev); !allowed {
+		observability.CountDropped(reason)
 		return nil, ErrIgnored
 	}
 	// MessageType 降级（docs/01 §2.9）：102 聊天记录的 content 是"[聊天记录]"占位文本，
@@ -447,15 +447,34 @@ func (o *Orchestrator) MarkActive(groupID string) {
 	}
 }
 
-// allowed 判定事件是否值得回复：基本消息判定 + 会话闸门。
-func (o *Orchestrator) allowed(ctx context.Context, ev port.Event) bool {
+// allowed 判定事件是否值得回复，返回拒绝原因（allowed=false 时理由）。
+// reason 由调用方统一打点，避免"闸门拒绝"与"档位禁插话"被记成同一类。
+func (o *Orchestrator) allowed(ctx context.Context, ev port.Event) (bool, observability.DropReason) {
 	if !replyable(ev) {
-		return false
+		return false, observability.DropGate
 	}
-	if o.cfg.Gate != nil {
-		return o.cfg.Gate.Allow(ctx, ev)
+	if o.cfg.Gate == nil {
+		return true, ""
 	}
-	return true
+	reason := o.cfg.Gate.Check(ctx, ev)
+	if reason == GateDeny {
+		return false, observability.DropGate
+	}
+	// 档位闸（2026-11-01）：自决插话只在允许主动的档位放行——上班在忙、
+	// 深夜睡觉时不自己起头聊天，等下班（full 档）再说。
+	//
+	// 只拦 GateSelfDecide：@、点名、私聊、活跃窗口内的追问都是"用户在跟
+	// 机器人说话"，属被动回复，任何时段都该回，否则 @ 了没反应更难受。
+	// 拦在闸门这一层还省了一次模型调用（群里闲聊不再产生 token）。
+	if reason == GateSelfDecide {
+		policy := o.resolvePolicy(ctx, ev)
+		if !policy.Caps.Proactive {
+			o.cfg.Logger.Info("档位禁止自决插话",
+				"event_id", ev.ID, "tier", string(policy.Tier), "group", ev.TargetID)
+			return false, observability.DropInterject
+		}
+	}
+	return true, ""
 }
 
 // replyable 判定事件是否值得回复：C2C、群 @ 与群全量（GROUP_MESSAGE_CREATE，

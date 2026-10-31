@@ -67,7 +67,8 @@ hours:                        # 默认分时段规则（docs/09 §3.1）；临�
   # days: ISO 星期，1=周一 … 7=周日；"1-5" 区间、"1,3,5" 列表、"*" 或空 = 每天
   # 整段不写（或 windows 为空）= 内置默认：工作日 09:00-18:00 = work、每日 23:00-07:00 = night
   windows:
-    - { days: "1-5", range: "09:00-18:00", tier: work }
+    - { days: "1-5", range: "09:00-12:00", tier: work }
+    - { days: "1-5", range: "14:00-18:00", tier: work }
     - { days: "*",     range: "23:00-07:00", tier: night }   # 跨零点
     # - { days: "6",  range: "14:00-16:00", tier: maint }     # 例：周六下午维护
 

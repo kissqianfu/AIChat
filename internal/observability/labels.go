@@ -20,7 +20,11 @@ const (
 	DropGate   DropReason = "gate"   // 会话闸门拒绝（未点名且无活跃窗口）
 	DropGuard  DropReason = "guard"  // 安全护栏拒绝
 	DropEmpty  DropReason = "empty"  // 空内容（纯图/纯表情且未点名）
-	DropBudget DropReason = "budget" // 被动额度耗尽且主动配额不允许
+	// DropInterject 没人叫、本可自决插话，但当前档位禁主动（上班/深夜）。
+	// 与 gate 分开记：gate 是"这类消息本来就不进模型"，interject 是"进了却被
+	// 时段挡回"，前者调配置能改，后者只能等到下班。
+	DropInterject DropReason = "interject"
+	DropBudget    DropReason = "budget" // 被动额度耗尽且主动配额不允许
 )
 
 // LLMSlot 是模型能力的槽位名（aichat_llm_* 的 slot label）。

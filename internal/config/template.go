@@ -49,6 +49,14 @@ db:
   backup_dir: ./data/backup
   auto_migrate: true               # 首次启动自动建库建表
 
+# 分时段档位
+hours:
+  windows:
+    - { days: "1-5", range: "09:00-12:00", tier: work }    # 工作日上班
+    - { days: "1-5", range: "14:00-18:00", tier: work }
+    - { days: "*",   range: "23:00-07:00", tier: night }   # 每天深夜
+
+
 # 人设（唯一真源在 persona/ 目录，不进库）
 persona:
   dir: ./persona
@@ -56,47 +64,6 @@ persona:
   file_meta: persona.yaml
   watch: true                      # 监听改动即时生效，无需重启
   max_bytes: 65536                 # 单个文件上限
-
-# 模型槽位：每个引用自带 base_url 与 api_key_name（→ api_key 表）。
-# 能力槽位（vision/embed/asr/tts/imagegen）的 base_url 留空 = 该能力关闭。
-models:
-  chat:
-    fast:                          # 日常闲聊，默认槽位（必填）
-      primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
-      # fallbacks:                 # 主模型失败时按序重试
-      #   - { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
-    strong:                        # 复杂推理/长文；缺失时回落 fast
-      primary: { base_url: https://api.deepseek.com, model: deepseek-v4-pro, api_key_name: deepseek }
-  # 图像理解：不用时整段删除（写了就必须给 base_url/model，不支持留空关闭）
-  vision:
-    primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
-  # 语义缓存向量：base_url 留空 = 关闭
-  embed:
-    primary: { base_url: "", model: text-embedding-3-small, api_key_name: openai }
-  # 语音识别：base_url 留空 = 关闭；protocol: openai（默认）| qianwen
-  asr:
-    primary: { base_url: https://maas.qianwenaiapi.com/compatible-mode/v1, model: qwen3-asr-flash, api_key_name: asr, protocol: qianwen }
-  # 语音合成：base_url 留空 = 关闭；protocol: elevenlabs（默认，pcm→silk）| breeze（mp3 直传）
-  tts:
-    primary: { base_url: https://api.breeze.blue/v1, model: breeze-tts-2, voice: voc_p36dbdewwvae, api_key_name: breezeblue, protocol: breeze }
-  # 图像生成：base_url 留空 = 关闭；还需下面 imagegen.enabled 打开
-  imagegen:
-    primary: { base_url: "", model: dall-e-3, size: 1024x1024, api_key_name: openai }
-  # 联网搜索/抓取端点：base_url 留空 = 默认 api.deepseek.com + 密钥 deepseek
-  search:
-    primary: { base_url: https://api.deepseek.com, api_key_name: deepseek, protocol: deepseek }
-
-# 分时段档位（整段删除 = 用下面这两条内置默认；窗口按顺序判定，首个命中生效）
-# 档位能力（写死在 policy.go）：
-#   full   工具 ✅  记忆 ✅  主动 ✅  1800 字   （未命中任何窗口时的档）
-#   work   工具 ✅  记忆 ✅  主动 ❌   300 字
-#   night  工具 ❌  记忆 ✅  主动 ❌   150 字
-#   maint  工具 ❌  记忆 ❌  主动 ❌    60 字   （只能 /hours 手动进入）
-# "主动" 指被动额度用尽后是否允许改发主动推送；禁主动 = 宁可少发一条，不打扰。
-hours:
-  windows:
-    - { days: "1-5", range: "09:00-18:00", tier: work }    # 工作日上班
-    - { days: "*",   range: "23:00-07:00", tier: night }   # 每天深夜
 
 # 记忆
 memory:
@@ -120,6 +87,37 @@ imagegen:
   enabled: false                   # 默认关
   max_per_day: 10                  # 每人/每群每天上限
 
+
+# 模型槽位：每个引用自带 base_url 与 api_key_name（→ api_key 表）。
+# 能力槽位（vision/embed/asr/tts/imagegen）的 base_url 留空 = 该能力关闭。
+models:
+  chat:
+    # 日常闲聊，默认槽位（必填）
+    fast:
+      primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
+    # 复杂推理/长文；缺失时回落 fast
+    strong:
+      primary: { base_url: https://api.deepseek.com, model: deepseek-v4-pro, api_key_name: deepseek }
+  # 图像理解：不用时整段删除（写了就必须给 base_url/model，不支持留空关闭）
+  vision:
+    primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
+  # 语义缓存向量：base_url 留空 = 关闭
+  embed:
+    primary: { base_url: "", model: text-embedding-3-small, api_key_name: openai }
+  # 语音识别：base_url 留空 = 关闭；protocol: openai（默认）| qianwen
+  asr:
+    primary: { base_url: https://maas.qianwenaiapi.com/compatible-mode/v1, model: qwen3-asr-flash, api_key_name: asr, protocol: qianwen }
+  # 语音合成：base_url 留空 = 关闭；protocol: elevenlabs（默认，pcm→silk）| breeze（mp3 直传）
+  tts:
+    primary: { base_url: https://api.breeze.blue/v1, model: breeze-tts-2, voice: voc_p36dbdewwvae, api_key_name: breezeblue, protocol: breeze }
+  # 图像生成：base_url 留空 = 关闭；还需下面 imagegen.enabled 打开
+  imagegen:
+    primary: { base_url: "", model: dall-e-3, size: 1024x1024, api_key_name: openai }
+  # 联网搜索/抓取端点：base_url 留空 = 默认 api.deepseek.com + 密钥 deepseek
+  search:
+    primary: { base_url: https://api.deepseek.com, api_key_name: deepseek, protocol: deepseek }
+
+
 # 功能灰度（未列出的项按代码默认；这里是生产在用的组合）
 features:
   cache: true                      # 回复缓存
@@ -127,9 +125,9 @@ features:
   memory_extract: true             # 被动记忆抽取
   tools: true                      # 工具调用
   followup: true                   # 追问引导
-  # 群内自决插话：群消息全量进主模型，模型输出 [SKIP] 即沉默。
-  # 代码默认 false，模板显式打开；关掉则群内只认点名。
-  interject: true
+  interject: true                  # 自决插话：群消息进主模型，模型输出 [SKIP] 即沉默
+                                   # 还要过档位：work/night 的 Proactive=false 时不插话
+                                   # （@、点名、私聊、回复后 3 分钟内的追问不受影响）
 `
 
 // WriteTemplate 把模板配置写到 path（父目录自动创建）。已存在时不覆盖，返回 false。

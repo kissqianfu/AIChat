@@ -65,12 +65,14 @@ func TestTemplateCoversAllSections(t *testing.T) {
 		t.Fatalf("db.postgres 段缺失：got %+v", got.DB.Postgres)
 	}
 	// hours 默认是空（用内置窗口），模板显式写出来，好让人看到怎么改。
-	if len(got.Hours.Windows) != 2 {
-		t.Fatalf("hours.windows 条数 = %d, want 2", len(got.Hours.Windows))
+	// 条数不锁死：窗口允许按实际作息拆段（比如把午休切出来落回 full），
+	// 但 work 与 night 的用法至少要各示范一条。
+	tiers := map[string]bool{}
+	for _, w := range got.Hours.Windows {
+		tiers[w.Tier] = true
 	}
-	if got.Hours.Windows[0].Tier != "work" || got.Hours.Windows[1].Tier != "night" {
-		t.Fatalf("hours.windows 档位 = %q/%q, want work/night",
-			got.Hours.Windows[0].Tier, got.Hours.Windows[1].Tier)
+	if !tiers["work"] || !tiers["night"] {
+		t.Fatalf("hours.windows 缺 work/night 示例：%+v", got.Hours.Windows)
 	}
 	// 灰度开关必须整组写全，漏写会被误读成"关掉"。
 	for _, k := range []string{"cache", "semantic_cache", "memory_extract", "tools", "followup", "interject"} {

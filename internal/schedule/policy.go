@@ -43,7 +43,9 @@ type Caps struct {
 	Tools bool
 	// Memory 是否允许读写记忆。
 	Memory bool
-	// Proactive 是否允许主动消息/自主插话。
+	// Proactive 是否允许主动：既管"被动额度用尽后转主动推送"，
+	// 也管"群里没人叫时自决插话"（2026-11-01 接通，此前只有前者生效）。
+	// false 表示这个时段不当出头鸟——宁可少说一句，也别在上班/睡觉时冒出来。
 	Proactive bool
 	// MaxReplyRunes 单条回复的最大 rune 数（0 表示不限，内置档位都不为 0）。
 	MaxReplyRunes int

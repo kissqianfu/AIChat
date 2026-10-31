@@ -27,6 +27,29 @@ type GateConfig struct {
 	Clock clock.Clock
 }
 
+// GateReason 说明一条消息为什么被放行（或被拒）。
+//
+// 拆出原因而不是只给 bool，是因为两类放行的代价不同：@、点名、私聊、
+// 活跃窗口内的追问是"用户明确在跟机器人说话"，任何时段都该回；
+// 而 GateSelfDecide（没人叫，进模型自决要不要插话）属于主动打扰，
+// 要额外过档位闸——上班/深夜不该自己起头聊天。
+type GateReason int
+
+const (
+	// GateDeny 不放行（机器人、未点名且无窗口且未开自决）。
+	GateDeny GateReason = iota
+	// GateDirect 单聊，必回。
+	GateDirect
+	// GateAt 群内 @ 机器人。
+	GateAt
+	// GateNamed 群里喊了主昵称或别名。
+	GateNamed
+	// GateWindow 处于回复后的活跃窗口内（追问、接话）。
+	GateWindow
+	// GateSelfDecide 无人叫，交给模型输出 [SKIP] 自决插不插话。
+	GateSelfDecide
+)
+
 // Gate 决定"这条消息要不要进模型"：单聊必回；群聊 @ / 唤醒词必回，
 // 其余看活跃窗口（刚回复过的群）或 GroupAutoReply（模型 [SKIP] 自决）。
 type Gate struct {
@@ -71,27 +94,38 @@ func (g *Gate) MarkActive(groupID string) {
 	observability.SetActiveWindows(len(g.active))
 }
 
-// Allow 判定是否允许回复。
-func (g *Gate) Allow(ctx context.Context, ev port.Event) bool {
+// Check 判定放行原因；GateDeny 表示不该回。
+//
+// 判定顺序即优先级：被叫到（@/点名）永远优先，其次活跃窗口，
+// 最后才落到"没人叫、靠模型自决"——这个顺序决定了档位闸只拦最后一类。
+func (g *Gate) Check(ctx context.Context, ev port.Event) GateReason {
 	if ev.Author.Bot {
-		return false
+		return GateDeny
 	}
 	if ev.Scene != port.SceneGroup {
-		return true
+		return GateDirect
 	}
 	if ev.AtMe {
-		return true
+		return GateAt
 	}
 	text := strings.ToLower(firstText(ev.Parts))
 	for _, name := range g.names {
 		if strings.Contains(text, name) {
-			return true
+			return GateNamed
 		}
 	}
 	if g.inWindow(ev.TargetID) {
-		return true
+		return GateWindow
 	}
-	return g.auto
+	if g.auto {
+		return GateSelfDecide
+	}
+	return GateDeny
+}
+
+// Allow 判定是否允许回复（Check 的布尔视图）。
+func (g *Gate) Allow(ctx context.Context, ev port.Event) bool {
+	return g.Check(ctx, ev) != GateDeny
 }
 
 // inWindow 返回该群是否处于活跃会话窗口内。
