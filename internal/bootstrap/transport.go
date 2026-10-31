@@ -66,6 +66,7 @@ func runWebhook(ctx context.Context, cfg *config.Config, logger *slog.Logger, ap
 	}
 	mux := http.NewServeMux()
 	mux.Handle(cfg.Webhook.Path, handler)
+	mux.Handle("/metrics", observability.MetricsHandler()) // Prometheus 抓取（只监听回环）
 	mux.Handle("/aichat/debug/vars", observability.DebugHandler())
 	srv := &http.Server{
 		Addr:              cfg.Webhook.Addr,

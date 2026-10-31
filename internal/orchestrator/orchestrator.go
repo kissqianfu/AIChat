@@ -308,7 +308,7 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator: 模型调用: %w", err)
 	}
-	observability.CountLLMCall()
+	// 模型调用打点已上移 registry 装饰器（按槽位记次数/耗时/token，2026-11-01）。
 	if elapsed := o.clock.Now().Sub(started); elapsed > 3*time.Second {
 		o.cfg.Logger.Warn("慢模型请求", "event_id", ev.ID, "elapsed_ms", elapsed.Milliseconds())
 	}
@@ -322,6 +322,7 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	// [SKIP] 自决协议（2026-11-01）：群普通消息直接进主模型，模型自己决定要不要插话；
 	// 输出 [SKIP] = 不插话。只落库用户消息（进上下文，后续接得上），不发送、不进缓存。
 	if isSkipReply(content) {
+		observability.CountInterjectSkip()
 		o.record(ctx, ev, userText, "")
 		o.cfg.Logger.Info("模型选择不插话", "event_id", ev.ID)
 		return nil, ErrIgnored

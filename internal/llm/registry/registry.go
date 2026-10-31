@@ -22,6 +22,7 @@ import (
 
 	"github.com/kissqianfu/aichat/internal/config"
 	"github.com/kissqianfu/aichat/internal/llm/deepseek"
+	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 	"github.com/kissqianfu/aichat/internal/port"
 )
@@ -266,6 +267,8 @@ func (r *Registry) ChatModel(ctx context.Context, slot string) (port.ChatModel, 
 		if ref.Thinking {
 			model = forcedThinking{inner: model}
 		}
+		// Prometheus 打点装饰（2026-11-01）：按槽位记调用数/耗时/token。
+		model = observability.InstrumentChatModel(model, slot)
 		models = append(models, model)
 		names = append(names, ref.BaseURL+"/"+ref.Model)
 	}

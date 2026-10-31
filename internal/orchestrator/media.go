@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -97,7 +98,9 @@ func (o *Orchestrator) transcribeVoice(ctx context.Context, ev port.Event) strin
 			o.cfg.Logger.Warn("下载语音失败", "event_id", ev.ID, "err", err)
 			return o.transcribeWavFallback(ctx, ev, p)
 		}
+		start := o.clock.Now()
 		text, err := o.cfg.Transcriber.Transcribe(ctx, data, mime)
+		observability.ObserveLLMCall("asr", -1, -1, o.clock.Now().Sub(start)) // ASR 无 token
 		if err != nil {
 			o.cfg.Logger.Warn("语音识别失败", "event_id", ev.ID, "err", err)
 			return o.transcribeWavFallback(ctx, ev, p)

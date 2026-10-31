@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/observability"
+	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -88,7 +90,10 @@ func (t *ImageGenTool) Invoke(ctx context.Context, args json.RawMessage) (port.T
 	if runes := []rune(prompt); len(runes) > maxImageGenPromptRunes {
 		prompt = string(runes[:maxImageGenPromptRunes])
 	}
+	clk := clock.System()
+	start := clk.Now()
 	data, mime, err := t.gen(ctx, prompt)
+	observability.ObserveLLMCall("imagegen", -1, -1, clk.Now().Sub(start)) // 画图无 token
 	if err != nil {
 		t.log.Warn("图像生成失败", "err", err)
 		return port.ToolResult{Content: "这张没画出来，换个描述试试。"}, nil

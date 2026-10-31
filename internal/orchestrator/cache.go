@@ -15,7 +15,7 @@ func (o *Orchestrator) cachedReply(ctx context.Context, ev port.Event, userText 
 	}
 	reply, ok := o.cfg.Cache.Lookup(ctx, ev, userText)
 	if ok {
-		observability.CountCacheHit()
+		observability.CountReplyCacheHit()
 		o.cfg.Logger.Info("命中回复缓存", "event_id", ev.ID)
 	}
 	return reply, ok

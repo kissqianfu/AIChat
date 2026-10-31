@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/observability"
+	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -60,7 +62,10 @@ func (t *VoiceTool) Invoke(ctx context.Context, args json.RawMessage) (port.Tool
 	if text == "" || len([]rune(text)) > voiceMaxTextRunes {
 		return port.ToolResult{}, fmt.Errorf("send_voice: text 为空或超过 %d 字", voiceMaxTextRunes)
 	}
+	clk := clock.System()
+	start := clk.Now()
 	silk, err := t.synth.Synthesize(ctx, text)
+	observability.ObserveLLMCall("tts", -1, -1, clk.Now().Sub(start)) // TTS 无 token
 	if err != nil {
 		return port.ToolResult{}, fmt.Errorf("send_voice: 合成失败: %w", err)
 	}

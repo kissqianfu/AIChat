@@ -89,7 +89,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, args json.RawMessage
 	cacheKey := name + "|" + string(args)
 	if cacheable(name) {
 		if result, hit := r.fromCache(cacheKey); hit {
-			observability.CountCacheHit()
+			observability.CountToolCacheHit()
 			return result, nil
 		}
 	}
@@ -100,10 +100,10 @@ func (r *Registry) Invoke(ctx context.Context, name string, args json.RawMessage
 		callCtx, cancel = context.WithTimeout(ctx, spec.Timeout)
 		defer cancel()
 	}
-	observability.CountToolCall()
+	observability.CountToolCall(name)
 	result, err := tool.Invoke(callCtx, args)
 	if err != nil {
-		observability.CountToolError()
+		observability.CountToolError(name)
 		return port.ToolResult{}, fmt.Errorf("tools: %s: %w", name, err)
 	}
 	if spec.MaxResult > 0 && len([]rune(result.Content)) > spec.MaxResult {

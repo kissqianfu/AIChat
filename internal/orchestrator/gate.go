@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 )
@@ -67,6 +68,7 @@ func (g *Gate) MarkActive(groupID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.active[groupID] = g.clk.Now()
+	observability.SetActiveWindows(len(g.active))
 }
 
 // Allow 判定是否允许回复。

@@ -33,7 +33,7 @@ func newEventHandler(sender *qqapi.Adapter, orch *orchestrator.Orchestrator, bud
 	welcomeGen func(ctx context.Context, kind, who string) string) func(context.Context, *event.Event) {
 	return func(ctx context.Context, sdkEvent *event.Event) {
 		ev := qqevent.FromSDK(sdkEvent)
-		observability.CountMessage()
+		observability.CountMessage(ev.Scene)
 		// 入口闸门（DEV_PROMPT §3.3 / docs/01 §6.5.1）：机器人消息（含其他 bot 与自身）
 		// 一律静默丢弃——不入库、不进上下文、不记忆、不回复，防自触发死循环。
 		if ev.Author.Bot || (selfID != "" && ev.Author.ID == selfID) {
@@ -167,7 +167,7 @@ func newEventHandler(sender *qqapi.Adapter, orch *orchestrator.Orchestrator, bud
 				return
 			}
 			sent++
-			observability.CountReply()
+			observability.CountReply(ev.Scene)
 			logger.Info("已回复", "event_id", ev.ID, "seq", out.Seq, "msg_id", res.PlatformMsgID, "deduped", res.Deduped)
 		}
 		if fu != nil && sent > 0 {

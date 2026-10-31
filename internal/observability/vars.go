@@ -5,50 +5,25 @@ import (
 	"net/http"
 )
 
+// vars.go：/aichat/debug/vars 的 expvar 排障端点（人肉看，与 Prometheus 指标并存）。
+// 业务打点统一走 metrics.go 的 Prometheus 实现，这里不再重复计数。
+
 var (
-	messagesTotal = expvar.NewInt("aichat_messages_total")
-	repliesTotal  = expvar.NewInt("aichat_replies_total")
-	errorsTotal   = expvar.NewInt("aichat_errors_total")
-	toolCalls     = expvar.NewInt("aichat_tool_calls_total")
-	toolErrors    = expvar.NewInt("aichat_tool_errors_total")
-	cacheHits     = expvar.NewInt("aichat_cache_hits_total")
-	llmCalls      = expvar.NewInt("aichat_llm_calls_total")
-	startedAt     = expvar.NewString("aichat_started_at")
-	queueDepth    = expvar.NewInt("aichat_queue_depth")
+	expVersion  expvar.String
+	expStarted  expvar.String
+	expVarsOnce bool
 )
 
-// InitVars 初始化 expvar 指标（启动时调一次）。
+// InitVars 初始化版本与启动时间（启动时调一次）。
 func InitVars(version, started string) {
-	expvar.Get("aichat_version")
-	if expvar.Get("aichat_version") == nil {
-		expvar.NewString("aichat_version").Set(version)
+	if !expVarsOnce {
+		expVarsOnce = true
+		expvar.Publish("aichat_version", &expVersion)
+		expvar.Publish("aichat_started_at", &expStarted)
 	}
-	startedAt.Set(started)
+	expVersion.Set(version)
+	expStarted.Set(started)
 }
-
-// SetQueueDepth 设置事件队列深度。
-func SetQueueDepth(n int) { queueDepth.Set(int64(n)) }
-
-// CountMessage 计数入站消息。
-func CountMessage() { messagesTotal.Add(1) }
-
-// CountReply 计数成功回复。
-func CountReply() { repliesTotal.Add(1) }
-
-// CountToolCall 计数工具调用。
-func CountToolCall() { toolCalls.Add(1) }
-
-// CountToolError 计数工具失败。
-func CountToolError() { toolErrors.Add(1) }
-
-// CountCacheHit 计数缓存命中。
-func CountCacheHit() { cacheHits.Add(1) }
-
-// CountLLMCall 计数模型调用。
-func CountLLMCall() { llmCalls.Add(1) }
-
-// CountError 计数处理错误。
-func CountError() { errorsTotal.Add(1) }
 
 // DebugHandler 返回 /aichat/debug/vars 的 handler。
 func DebugHandler() http.Handler { return expvar.Handler() }
