@@ -2,11 +2,13 @@ package observability
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -56,8 +58,8 @@ func TestCountersAndLLMObservation(t *testing.T) {
 		t.Fatalf("replies_total{group} = %v, want 1", got)
 	}
 
-	ObserveLLMCall(SlotChatFast, 100, 20, 1500*time.Millisecond)
-	ObserveLLMCall(SlotASR, -1, -1, time.Second)
+	ObserveLLMCall(SlotChatFast, 100, 20, 0, 1500*time.Millisecond)
+	ObserveLLMCall(SlotASR, -1, -1, -1, time.Second)
 	if got := testutil.ToFloat64(llmCallsTotal.WithLabelValues(string(SlotChatFast))); got != 1 {
 		t.Fatalf("llm_calls_total{chat.fast} = %v, want 1", got)
 	}
@@ -159,4 +161,78 @@ func (*failChatModel) Chat(context.Context, port.ChatRequest) (*port.ChatRespons
 
 func (*failChatModel) Stream(context.Context, port.ChatRequest) (port.ChatStream, error) {
 	return nil, errNotImplemented
+}
+
+// fakeStream 是按脚本吐增量的流桩。
+type fakeStream struct {
+	deltas []port.Delta
+	i      int
+	closed bool
+}
+
+func (s *fakeStream) Recv() (port.Delta, error) {
+	if s.i >= len(s.deltas) {
+		return port.Delta{}, io.EOF
+	}
+	d := s.deltas[s.i]
+	s.i++
+	return d, nil
+}
+
+func (s *fakeStream) Close() error { s.closed = true; return nil }
+
+// streamModel 是 Stream 返回固定脚本的模型桩。
+type streamModel struct{ deltas []port.Delta }
+
+func (*streamModel) Chat(context.Context, port.ChatRequest) (*port.ChatResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *streamModel) Stream(context.Context, port.ChatRequest) (port.ChatStream, error) {
+	return &fakeStream{deltas: m.deltas}, nil
+}
+
+// TestStreamUsageTapRecordsTokens 覆盖流式路径的用量补记：
+// 私聊走 streamTee → 模型 Stream，用量只在收流末尾那一帧给，
+// 漏记会让主力场景的 token 与账单整块缺失。
+func TestStreamUsageTapRecordsTokens(t *testing.T) {
+	oldClock := metricClock
+	// 2026-11-02 周一 10:00（北京时间）= 高峰档，便于同时验证费用翻倍。
+	metricClock = clock.NewFrozen(time.Date(2026, 11, 2, 10, 0, 0, 0, BillingLocation))
+	defer func() { metricClock = oldClock }()
+
+	usage := &port.TokenUsage{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100, CachedTokens: 800}
+	model := InstrumentChatModel(&streamModel{deltas: []port.Delta{
+		{Content: "你"},
+		{Content: "好", Usage: usage},
+		{FinishReason: "stop", Usage: usage}, // 后续帧不再重复计
+	}}, SlotVision)
+
+	beforeTok := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenPrompt)))
+	beforeCached := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenCached)))
+	beforeCost := testutil.ToFloat64(llmCostMicros.WithLabelValues(string(SlotVision)))
+
+	stream, err := model.Stream(t.Context(), fakeReq())
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	for {
+		if _, err := stream.Recv(); err != nil {
+			break
+		}
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	if got := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenPrompt))) - beforeTok; got != 1000 {
+		t.Fatalf("prompt tokens 增量 = %v, want 1000", got)
+	}
+	if got := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenCached))) - beforeCached; got != 800 {
+		t.Fatalf("cached tokens 增量 = %v, want 800", got)
+	}
+	// 高峰价：未命中 200×2 + 命中 800×0.04 + 输出 100×8 = 400+32+800 = 1232 微元。
+	if got := testutil.ToFloat64(llmCostMicros.WithLabelValues(string(SlotVision))) - beforeCost; got != 1232 {
+		t.Fatalf("cost 增量 = %v 微元, want 1232", got)
+	}
 }

@@ -39,8 +39,9 @@ const (
 type TokenKind string
 
 const (
-	TokenPrompt     TokenKind = "prompt"
-	TokenCompletion TokenKind = "completion"
+	TokenPrompt     TokenKind = "prompt"     // 输入总量（含 cached 部分）
+	TokenCompletion TokenKind = "completion" // 输出
+	TokenCached     TokenKind = "cached"     // 输入中命中缓存的部分（单价约为未命中的 2%）
 )
 
 // CacheKind 是回复缓存类型（aichat_reply_cache_* 的 kind label）。

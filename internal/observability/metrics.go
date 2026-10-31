@@ -20,8 +20,9 @@ import (
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
-// metricClock 是打点用的系统时钟（观测墙钟耗时是本包职责本体，走 clock 统一出口）。
-var metricClock = clock.System()
+// metricClock 是打点用的时钟（观测墙钟耗时、判定峰谷单价都是本包职责本体，
+// 走 clock 统一出口，测试可冻结在高峰/闲时档位上验证费用）。
+var metricClock clock.Clock = clock.System()
 
 var (
 	messagesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -48,6 +49,20 @@ var (
 		Name: "aichat_llm_errors_total",
 		Help: "模型调用失败数（按槽位；ASR/TTS/画图失败率看这里）",
 	}, []string{"slot"})
+	llmCostMicros = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_llm_cost_micros_total",
+		Help: "模型调用费用（人民币微元；已按调用时刻的峰谷单价折算，除 1e6 得元）",
+	}, []string{"slot"})
+	// 每次抓取时现算，空闲不打点也不会陈旧。
+	billingPeak = promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "aichat_billing_peak",
+		Help: "当前是否处于模型高峰计费档（1=高峰价，0=闲时半价）",
+	}, func() float64 {
+		if isPeak(metricClock.Now()) {
+			return 1
+		}
+		return 0
+	})
 	llmLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "aichat_llm_latency_seconds",
 		Help:    "模型调用耗时",
@@ -164,7 +179,7 @@ func ObserveWebhook(code int, d time.Duration) {
 // ObserveMediaCall 包一次媒体能力调用（asr/tts/imagegen 无 token）：
 // 记次数与耗时，失败额外记 llm_errors。start 由调用方用 clock 提供。
 func ObserveMediaCall(slot LLMSlot, start time.Time, err error) {
-	ObserveLLMCall(slot, -1, -1, metricClock.Now().Sub(start))
+	ObserveLLMCall(slot, -1, -1, -1, metricClock.Now().Sub(start))
 	if err != nil {
 		CountLLMError(slot)
 	}
@@ -179,18 +194,43 @@ func SetQueueDepth(n int) { queueDepth.Set(float64(n)) }
 // SetActiveWindows 设置活跃会话窗口数。
 func SetActiveWindows(n int) { activeWindows.Set(float64(n)) }
 
-// ObserveLLMCall 记一次模型调用：次数 + 耗时 + token（token 负值 = 不计）。
+// ObserveLLMCall 记一次模型调用：次数 + 耗时 + token + 费用。
+// token 传负值 = 不计；cached 是 prompt 里命中缓存的部分（厂商不报则传 0）。
 // slot 见 labels.go 的 LLMSlot 常量。
-func ObserveLLMCall(slot LLMSlot, promptTok, completionTok int, latency time.Duration) {
+func ObserveLLMCall(slot LLMSlot, promptTok, completionTok, cachedTok int, latency time.Duration) {
 	s := string(slot)
 	llmCallsTotal.WithLabelValues(s).Inc()
 	llmLatency.WithLabelValues(s).Observe(latency.Seconds())
+	addTokens(slot, promptTok, completionTok, cachedTok)
+}
+
+// addTokens 只累加 token 与费用（不含次数与耗时）——流式响应的 usage 在收流
+// 末尾才到，此时调用次数早已记过，只能补这一半。
+func addTokens(slot LLMSlot, promptTok, completionTok, cachedTok int) {
+	if promptTok < 0 && completionTok < 0 {
+		return
+	}
+	s := string(slot)
 	if promptTok >= 0 {
 		llmTokensTotal.WithLabelValues(s, string(TokenPrompt)).Add(float64(promptTok))
 	}
 	if completionTok >= 0 {
 		llmTokensTotal.WithLabelValues(s, string(TokenCompletion)).Add(float64(completionTok))
 	}
+	if cachedTok >= 0 {
+		llmTokensTotal.WithLabelValues(s, string(TokenCached)).Add(float64(cachedTok))
+	}
+	if cost := costMicros(slot, max0(promptTok), max0(completionTok), max0(cachedTok), metricClock.Now()); cost > 0 {
+		llmCostMicros.WithLabelValues(s).Add(cost)
+	}
+}
+
+// max0 把「不计」哨兵值（-1）折成 0，供费用计算使用。
+func max0(n int) int {
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // MetricsHandler 返回 /metrics 的 handler。
@@ -208,26 +248,54 @@ func (m *instrumentedChatModel) Chat(ctx context.Context, req port.ChatRequest) 
 	elapsed := metricClock.Now().Sub(start)
 	if err != nil {
 		CountLLMError(m.slot)
-		ObserveLLMCall(m.slot, -1, -1, elapsed)
+		ObserveLLMCall(m.slot, -1, -1, -1, elapsed)
 		return resp, err
 	}
 	if resp == nil {
-		ObserveLLMCall(m.slot, -1, -1, elapsed)
+		ObserveLLMCall(m.slot, -1, -1, -1, elapsed)
 		return resp, nil
 	}
-	ObserveLLMCall(m.slot, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, elapsed)
+	ObserveLLMCall(m.slot, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.CachedTokens, elapsed)
 	return resp, err
 }
 
+// Stream 对流式调用记次数与建流耗时，并用 usageTapStream 在收流末尾补 token。
+//
+// 私聊回复走的就是这条路径（orchestrator.streamTee 把 Chat 换成 Stream），
+// 不在这里补 token 的话，主力场景的用量与费用会整块缺失。
 func (m *instrumentedChatModel) Stream(ctx context.Context, req port.ChatRequest) (port.ChatStream, error) {
 	start := metricClock.Now()
 	stream, err := m.inner.Stream(ctx, req)
-	ObserveLLMCall(m.slot, -1, -1, metricClock.Now().Sub(start)) // 流式 token 不好聚合，只记次数与耗时
+	ObserveLLMCall(m.slot, -1, -1, -1, metricClock.Now().Sub(start))
 	if err != nil {
 		CountLLMError(m.slot)
+		return stream, err
 	}
-	return stream, err
+	return &usageTapStream{inner: stream, slot: m.slot}, nil
 }
+
+// usageTapStream 透传流并在遇到带 usage 的增量时补记 token 与费用。
+//
+// 厂商的 include_usage 只在收流末尾那一帧给用量；若调用方提前 break 并
+// Close（如按长度截断收流），该次用量拿不到，只留下次数与耗时——属已知
+// 的偏低场景，不额外补猜。
+type usageTapStream struct {
+	inner port.ChatStream
+	slot  LLMSlot
+	taken bool // 已记过用量（只认第一次带 usage 的帧）
+}
+
+func (s *usageTapStream) Recv() (port.Delta, error) {
+	delta, err := s.inner.Recv()
+	if !s.taken && delta.Usage != nil {
+		s.taken = true
+		u := delta.Usage
+		addTokens(s.slot, u.PromptTokens, u.CompletionTokens, u.CachedTokens)
+	}
+	return delta, err
+}
+
+func (s *usageTapStream) Close() error { return s.inner.Close() }
 
 // InstrumentChatModel 给模型套槽位打点装饰（registry 包内部使用）。
 func InstrumentChatModel(model port.ChatModel, slot LLMSlot) port.ChatModel {
