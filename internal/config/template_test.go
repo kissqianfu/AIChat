@@ -32,3 +32,50 @@ func TestLoadMissingIsSentinel(t *testing.T) {
 		t.Fatalf("err = %v, want ErrConfigMissing", err)
 	}
 }
+
+// TestTemplateCoversAllSections 盯住"模板漏段"：每个可调段都要出现在模板里，
+// 落盘后再读回来必须与内置默认一致。漏一段就意味着用户看不见那个旋钮。
+func TestTemplateCoversAllSections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if _, err := WriteTemplate(path); err != nil {
+		t.Fatalf("WriteTemplate() error = %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	def := Default()
+
+	if got.Memory != def.Memory {
+		t.Fatalf("memory 段缺失或偏离默认：got %+v, want %+v", got.Memory, def.Memory)
+	}
+	if got.Emotion != def.Emotion {
+		t.Fatalf("emotion 段缺失：got %+v", got.Emotion)
+	}
+	if got.Sticker != def.Sticker {
+		t.Fatalf("sticker 段缺失：got %+v", got.Sticker)
+	}
+	if got.ImageGen != def.ImageGen {
+		t.Fatalf("imagegen 段缺失：got %+v", got.ImageGen)
+	}
+	if got.Persona.MaxBytes != def.Persona.MaxBytes {
+		t.Fatalf("persona.max_bytes = %d, want %d", got.Persona.MaxBytes, def.Persona.MaxBytes)
+	}
+	if got.DB.Postgres != def.DB.Postgres {
+		t.Fatalf("db.postgres 段缺失：got %+v", got.DB.Postgres)
+	}
+	// hours 默认是空（用内置窗口），模板显式写出来，好让人看到怎么改。
+	if len(got.Hours.Windows) != 2 {
+		t.Fatalf("hours.windows 条数 = %d, want 2", len(got.Hours.Windows))
+	}
+	if got.Hours.Windows[0].Tier != "work" || got.Hours.Windows[1].Tier != "night" {
+		t.Fatalf("hours.windows 档位 = %q/%q, want work/night",
+			got.Hours.Windows[0].Tier, got.Hours.Windows[1].Tier)
+	}
+	// 灰度开关必须整组写全，漏写会被误读成"关掉"。
+	for _, k := range []string{"cache", "semantic_cache", "memory_extract", "tools", "followup", "interject"} {
+		if _, ok := got.Features[k]; !ok {
+			t.Fatalf("features 缺 %q", k)
+		}
+	}
+}

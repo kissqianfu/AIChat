@@ -9,6 +9,7 @@ import (
 
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
+	"github.com/kissqianfu/aichat/internal/schedule"
 )
 
 func TestBudgetTakeAndWindow(t *testing.T) {
@@ -124,5 +125,69 @@ func TestRepliesBudgetExhausted(t *testing.T) {
 	}
 	if _, err := o.Replies(context.Background(), messageEvent()); !errors.Is(err, ErrBudgetExhausted) {
 		t.Fatalf("err = %v, want ErrBudgetExhausted", err)
+	}
+}
+
+// TestProactiveFallsBackOnlyInFullTier 覆盖档位闸：被动额度用尽后，
+// 只有 full 档允许去掉锚点转主动推送，work/night 一律放弃（少发一条也不打扰）。
+func TestProactiveFallsBackOnlyInFullTier(t *testing.T) {
+	cases := []struct {
+		name      string
+		tier      schedule.Tier
+		proactive bool
+		wantErr   bool
+	}{
+		{"full 允许转主动", schedule.TierFull, true, false},
+		{"work 禁主动", schedule.TierWork, false, true},
+		{"night 禁主动", schedule.TierNight, false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			clk := clock.NewFrozen(time.Unix(1700000000, 0))
+			budget := NewBudget(clk)
+			for i := 0; i < passiveMax; i++ {
+				_, _ = budget.Take(port.SceneGroup, "msg-1")
+			}
+			policy := schedule.Policy{
+				Tier:   c.tier,
+				Caps:   schedule.Caps{Tools: true, Memory: true, Proactive: c.proactive, MaxReplyRunes: 300},
+				Sticky: true,
+			}
+			o, err := New(Config{
+				Model:   &fakeModel{resp: &port.ChatResponse{Content: "hi"}},
+				Persona: "p",
+				Budget:  budget,
+				Proactive: func(context.Context, port.Event) (bool, error) {
+					return true, nil // 平台配额放行，剩下的只由档位决定
+				},
+				Policy: func(context.Context, port.Event) (schedule.Policy, error) {
+					return policy, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			outs, err := o.Replies(context.Background(), messageEvent())
+			if c.wantErr {
+				if !errors.Is(err, ErrBudgetExhausted) {
+					t.Fatalf("err = %v, want ErrBudgetExhausted", err)
+				}
+				if outs != nil {
+					t.Fatalf("outs = %v, want nil（档位禁主动，不该有出站）", outs)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Replies() error = %v", err)
+			}
+			if len(outs) == 0 {
+				t.Fatal("full 档应转主动发送，实际无出站")
+			}
+			for i, out := range outs {
+				if out.Anchor.MsgID != "" {
+					t.Fatalf("主动消息不该带锚点，out %d anchor = %+v", i, out.Anchor)
+				}
+			}
+		})
 	}
 }

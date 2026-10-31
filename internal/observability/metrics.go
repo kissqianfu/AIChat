@@ -6,6 +6,8 @@ package observability
 // 只监听回环，公网摸不到）。模型调用族统一 aichat_llm_calls_total{slot}——
 // slot 涵盖 chat.fast/chat.strong/vision（registry 装饰器自动打点）与
 // asr/tts/imagegen（调用处手动打点），token 只在 chat 系记（asr/tts/imagegen 无 token）。
+// 费用不进看板算：打点处已按调用时刻的峰谷单价折成微元累加（见 pricing.go），
+// 看板侧只做「选窗口 + 除 1e6」，历史数据的单价自动跟着当时档位走。
 
 import (
 	"context"
