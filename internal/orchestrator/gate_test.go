@@ -185,6 +185,10 @@ func tierPolicy(tier schedule.Tier, proactive bool) func(context.Context, port.E
 // TestInterjectBlockedInBusyTier 覆盖"上班在忙、下班才能玩"：群里没人叫时，
 // 只有允许主动的档位才把消息送进模型自决插话；work/night 直接拦在闸门，
 // 连模型调用都不产生（省钱也省打扰）。
+//
+// 同时锁住一条明确的产品约定：被档位拦下的群消息**不落库、不进历史**
+// （用户 2026-11-01 确认）。所以忙碌时段的群聊在上下文里是不存在的，
+// 下班后不会突然接上白天的话题。
 func TestInterjectBlockedInBusyTier(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -199,11 +203,13 @@ func TestInterjectBlockedInBusyTier(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			model := &fakeModel{resp: &port.ChatResponse{Content: "我也在玩"}}
+			recorder := &fakeRecorder{}
 			o, err := New(Config{
-				Model:   model,
-				Persona: "p",
-				Gate:    NewGate(GateConfig{SelfName: "小柒", GroupAutoReply: true}),
-				Policy:  tierPolicy(c.tier, c.policy),
+				Model:    model,
+				Persona:  "p",
+				Recorder: recorder,
+				Gate:     NewGate(GateConfig{SelfName: "小柒", GroupAutoReply: true}),
+				Policy:   tierPolicy(c.tier, c.policy),
 			})
 			if err != nil {
 				t.Fatalf("New() error = %v", err)
@@ -219,6 +225,9 @@ func TestInterjectBlockedInBusyTier(t *testing.T) {
 				if outs != nil {
 					t.Fatalf("outs = %v, want nil", outs)
 				}
+				if len(recorder.recs) != 0 {
+					t.Fatalf("落库 %d 条，want 0（被拦的群消息不落库、不进历史）", len(recorder.recs))
+				}
 				return
 			}
 			if err != nil {
@@ -226,6 +235,10 @@ func TestInterjectBlockedInBusyTier(t *testing.T) {
 			}
 			if model.calls != 1 || len(outs) == 0 {
 				t.Fatalf("model.calls = %d, outs = %d, want 1/>=1", model.calls, len(outs))
+			}
+			// 放行的路径照常落库（入站 + 出站两条）。
+			if len(recorder.recs) != 2 {
+				t.Fatalf("落库 %d 条，want 2（in + out）", len(recorder.recs))
 			}
 		})
 	}
