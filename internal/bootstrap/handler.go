@@ -33,11 +33,16 @@ func newEventHandler(sender *qqapi.Adapter, orch *orchestrator.Orchestrator, bud
 	welcomeGen func(ctx context.Context, kind, who string) string) func(context.Context, *event.Event) {
 	return func(ctx context.Context, sdkEvent *event.Event) {
 		ev := qqevent.FromSDK(sdkEvent)
-		observability.CountMessage(ev.Scene)
 		// 入口闸门（DEV_PROMPT §3.3 / docs/01 §6.5.1）：机器人消息（含其他 bot 与自身）
 		// 一律静默丢弃——不入库、不进上下文、不记忆、不回复，防自触发死循环。
 		if ev.Author.Bot || (selfID != "" && ev.Author.ID == selfID) {
 			return
+		}
+		// 消息计数（2026-11-01 从入口挪到 bot 过滤之后）：只计真实用户消息，
+		// 机器人消息与进退群/互动等非消息事件不计。
+		switch ev.Type {
+		case port.EvGroupMessageCreate, port.EvGroupAtMessageCreate, port.EvC2CMessageCreate:
+			observability.CountMessage(ev.Scene)
 		}
 		// 群全量消息的 @ 归属（2026-10-31）：content 内联 <@member_openid> vs bot_state 身份，
 		// 命中写 AtMe 并剥掉标签；其余类型信任平台/SDK 判定，原样通过。
