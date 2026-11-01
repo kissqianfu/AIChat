@@ -1,18 +1,25 @@
-// Package qianwen 是通义千问（阿里云百炼）Chat Completions 的子模块。
+// Package qianwen 是通义千问（阿里云百炼）的适配。
 //
-// 走百炼的 OpenAI 兼容端点（/compatible-mode/v1），认证与响应形状都与标准
-// 一致，所以公共实现在 internal/llm/compat。本包只声明千问与标准 OpenAI 的
-// 四处差异，其中前两条是**行为**差异，不处理会真的出错：
+// 千问一家有**三套互不相同的调用接口**，各占一个文件：
 //
-//  1. 思考开关是顶层 enable_thinking（布尔），且 qwen3 系列**默认开启思考**——
-//     所以关思考必须显式发 false。漏发不会报错，只会白烧几十倍输出 token
-//     （思考内容按输出计费），属于「看不出错、但账单明显变贵」的坑。
-//  2. 缓存命中的输入 token 在 prompt_tokens_details.cached_tokens（标准位），
-//     不在 DeepSeek 的 prompt_cache_hit_tokens。
-//  3. 只有部分模型支持非流式（商业版支持；qwen3.5 部分开源版非流式直接报
-//     `parameter.enable_thinking only support stream call`）——这是厂商侧限制，
-//     本包不猜，交给配置选模型。
-//  4. base_url 必须带 /compatible-mode/v1；只写域名会 404，所以这里做了归一化。
+//   - chat.go：对话，走兼容模式 /compatible-mode/v1 的 Chat Completions；
+//   - image.go：文生图，走原生 multimodal-generation（兼容模式下的
+//     /images/generations 实测 404）；
+//   - asr.go：语音转文字，走兼容模式 chat/completions 的 input_audio 内容块。
+//
+// 三者共用同一个 API key 与主机，但端点路径、请求体、响应形状完全不同，
+// 所以按接口分文件、分别登记（见 register.go）——换掉其中一个不影响另外两个。
+//
+// 对话部分与标准 OpenAI 的差异（前两条是**行为**差异，不处理会真出错，细节见 Dialect
+// 与 NormalizeBaseURL 的注释）：
+//
+//  1. 思考开关是顶层 enable_thinking，且 qwen3 系列**默认开启思考**，关思考必须显式
+//     发 false——漏发不报错，只是白烧输出 token（思考内容按输出计费）；
+//  2. 缓存命中的输入 token 在 prompt_tokens_details.cached_tokens；
+//  3. 只有部分模型支持非流式（部分开源版直接报
+//     `parameter.enable_thinking only support stream call`）——厂商侧限制，本包不猜，
+//     交给配置选模型；
+//  4. base_url 必须带 /compatible-mode/v1，只写域名会 404，所以做了归一化。
 package qianwen
 
 import (

@@ -134,7 +134,6 @@ type wiring struct {
 	appSecret string
 
 	reg         *registry.Registry
-	asrModel    string
 	imageModel  string
 	imageSize   string
 	modelRouter *router.Router

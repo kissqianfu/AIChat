@@ -7,7 +7,6 @@ import (
 
 	"github.com/kissqianfu/aichat/internal/cache"
 	"github.com/kissqianfu/aichat/internal/limits"
-	"github.com/kissqianfu/aichat/internal/llm/adapter"
 	"github.com/kissqianfu/aichat/internal/llm/protocol"
 	"github.com/kissqianfu/aichat/internal/media"
 	"github.com/kissqianfu/aichat/internal/orchestrator"
@@ -53,9 +52,7 @@ func (w *wiring) buildToolbox(ctx context.Context) error {
 		if ref.BaseURL != "" {
 			searchBaseURL, searchKeyName = ref.BaseURL, ref.APIKeyName
 		}
-		if p := adapter.ProtocolOf(ref.Protocol); p != "" {
-			searchProtocol = p
-		}
+		searchProtocol = protocol.Or(ref.Protocol, protocol.DeepSeek)
 	}
 	searchKey := func(ctx context.Context) (string, error) { return w.keyRepo.Key(ctx, searchKeyName) }
 	fetchBackend := tools.FetchBackend(nil)
@@ -199,6 +196,13 @@ func (w *wiring) buildOrchestrator() (*orchestrator.Orchestrator, error) {
 	if w.cfg.Sticker.Enabled {
 		stickerCollector = w.buildStickerCollector()
 	}
+	// 语音转文字（models.asr）：protocol 决定走哪家（openai 是 multipart 上传，
+	// qianwen 是 chat 的 input_audio），差异全在各家自己的模块里。配置有问题只告警，
+	// 不阻塞启动——ASR 挂了就退化成"只看文字"。
+	transcriber, err := asrFor(w.reg, w.keyRepo, w.logger)
+	if err != nil {
+		w.logger.Warn("语音转文字未启用", "err", err)
+	}
 	orch, err := orchestrator.New(orchestrator.Config{
 		ModelFor: w.modelRouter.ModelFor,
 		Persona:  w.persona.Render(w.self.Username),
@@ -230,7 +234,7 @@ func (w *wiring) buildOrchestrator() (*orchestrator.Orchestrator, error) {
 		Sticker:           stickerCollector,
 		Cache:             w.replyCache,
 		Guard:             &guardAdapter{guard: limits.NewDefaultGuard(w.clk)},
-		Transcriber:       transcriberFor(openAIForSlot(w.reg, w.keyRepo, "asr"), w.asrModel, asrProtocolOf(w.reg)),
+		Transcriber:       transcriber,
 		Policy:            w.policyResolver(),
 		Proactive:         w.proactive.Allow,
 		Clock:             w.clk,

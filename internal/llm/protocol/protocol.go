@@ -1,14 +1,15 @@
-// Package protocol 是模型协议名的唯一词表（2026-11-01）。
+// Package protocol 是模型协议名的唯一词表。
 //
 // models 段里每个引用都带 protocol：它同时回答两个问题——
-//  1. 用谁家的客户端发请求（internal/llm/adapter 按它分派）；
+//  1. 用谁家的实现发请求（internal/llm/provider 按 (能力, 协议) 查注册表）；
 //  2. 用谁家的价目表算钱（internal/billing 按它取 Rater）。
 //
 // 两个消费者共用这一个词表，避免「客户端连 A 家、计费按 B 家」这种对不上的错。
 //
-// 协议 ≠ 厂商：deepseek / openai / qianwen 三家的对话接口都是 OpenAI 兼容的
-// Chat Completions，差别只在 base_url 与计费口径，所以共用一套 wire 实现；
-// 哪天接非兼容协议（如 Anthropic Messages、Gemini），在 adapter 里加分支即可。
+// 协议 ≠ 厂商 ≠ 接口：deepseek / openai / qianwen 的对话接口都是 OpenAI 兼容的
+// Chat Completions，共用 internal/llm/compat 里的 wire 实现，但每家的
+// 「有没有实现某个接口」由该家自己的 register.go 声明——本包只管名字与槽位默认值，
+// 不判断谁支持什么（那是注册表的事实，不是词表的意见）。
 package protocol
 
 import "strings"
@@ -49,55 +50,16 @@ func IsChat(slot string) bool {
 	return strings.HasPrefix(slot, "chat.") || slot == "vision"
 }
 
-// ChatCompatible 判断该协议是否走 OpenAI 兼容的 Chat Completions 线格式。
+// Or 归一化协议名；空串返回 def。
 //
-// 这三家共用一套实现，只是 base_url 不同——所以「换供应商」在对话侧
-// 真的只改配置，不需要新写客户端。
-func ChatCompatible(p string) bool {
-	switch Normalize(p) {
-	case DeepSeek, OpenAI, Qianwen:
-		return true
-	default:
-		return false
+// 指标 label 与计费口径用它：配置里写 "DeepSeek" 或什么都不写，最终都必须落到
+// 同一个 label 上，否则看板上同一家会裂成两条曲线。
+func Or(p, def string) string {
+	if v := Normalize(p); v != "" {
+		return v
 	}
+	return def
 }
 
-// Valid 校验某槽位允许的协议；空串视为合法（用 DefaultFor 兜底）。
-func Valid(slot, p string) bool {
-	switch Normalize(p) {
-	case "":
-		return true
-	case DeepSeek:
-		// DeepSeek 提供对话、视觉与联网搜索；不提供 TTS/ASR/画图。
-		return IsChat(slot) || slot == "search"
-	case OpenAI:
-		return IsChat(slot) || slot == "asr" || slot == "imagegen"
-	case Qianwen:
-		// 千问的 ASR 与画图都在百炼上，但**不是同一套接口**：ASR 走
-		// /compatible-mode/v1（OpenAI 兼容），画图走原生 multimodal-generation
-		// （/compatible-mode/v1/images/generations 实测 404）。
-		return IsChat(slot) || slot == "asr" || slot == "imagegen"
-	case ElevenLabs, Breeze:
-		return slot == "tts"
-	default:
-		return false
-	}
-}
-
-// Allowed 返回槽位可选协议的说明串（拼进报错信息，省得运维去翻文档）。
-func Allowed(slot string) string {
-	switch {
-	case IsChat(slot):
-		return "deepseek/openai/qianwen"
-	case slot == "asr":
-		return "openai/qianwen"
-	case slot == "tts":
-		return "elevenlabs/breeze"
-	case slot == "imagegen":
-		return "openai/qianwen"
-	case slot == "search":
-		return "deepseek"
-	default:
-		return "deepseek/openai/qianwen"
-	}
-}
+// 谁支持哪个接口不在这里判断：那是 internal/llm/provider 的注册表事实——
+// 各家在自己包里登记，配置校验去查表，避免出现「白名单说有、实现里没有」的第二份真相。

@@ -21,8 +21,12 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/kissqianfu/aichat/internal/config"
-	"github.com/kissqianfu/aichat/internal/llm/adapter"
+	// 这里 blank import 一次，保证「从配置造模型」的地方一定有实现可选：
+	// 校验阶段要用 provider 的注册表判断 protocol 有没有实现，漏装就等于所有
+	// protocol 都报"不支持"。厂商清单在 internal/llm/all 一处维护。
+	_ "github.com/kissqianfu/aichat/internal/llm/all"
 	"github.com/kissqianfu/aichat/internal/llm/protocol"
+	"github.com/kissqianfu/aichat/internal/llm/provider"
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 	"github.com/kissqianfu/aichat/internal/port"
@@ -147,9 +151,9 @@ func validateModels(m config.ModelsConfig) (map[string]Slot, error) {
 			if err := validateProtocol(name, ref.Protocol); err != nil {
 				return nil, err
 			}
-			// 对话/视觉槽位没写 base_url 时由 protocol 的默认端点兜底（adapter.DefaultBaseURL）。
+			// 对话/视觉槽位没写 base_url 时由 protocol 的默认端点兜底（provider 登记时给的）。
 			if strings.TrimSpace(ref.BaseURL) == "" && protocol.IsChat(name) &&
-				adapter.DefaultBaseURL(protocol.Normalize(ref.Protocol)) == "" {
+				provider.ChatDefaultBaseURL(ref.Protocol) == "" {
 				return nil, fmt.Errorf("registry: 槽位 %q 既没有 base_url 也没有可用的 protocol（%q）",
 					name, ref.Protocol)
 			}
@@ -160,14 +164,30 @@ func validateModels(m config.ModelsConfig) (map[string]Slot, error) {
 
 // validateProtocol 校验槽位的 protocol 取值（大小写不敏感；空 = 该槽位默认）。
 //
-// 词表在 internal/llm/protocol：它同时被 adapter（选客户端）与 billing（选价目表）
-// 消费，所以这里不再维护第二份规则。
+// 依据是 provider 的注册表，而不是另维护一份「协议白名单」：某家没实现这个接口，
+// 就该在读配置时当场报出来（并列出该能力已注册的协议），而不是等第一条消息
+// 进来才发现——那时用户看到的是"模型没反应"。
 func validateProtocol(slot, p string) error {
-	if protocol.Valid(slot, p) {
+	proto := protocol.Normalize(p)
+	if proto == "" {
 		return nil
 	}
-	return fmt.Errorf("registry: 槽位 %q 不支持 protocol %q（可选：%s）",
-		slot, p, protocol.Allowed(slot))
+	// search 槽位没有模型接口：它的 protocol 只决定计费口径与是否走官方 Fetch 接口。
+	if slot == "search" {
+		if proto == protocol.DeepSeek {
+			return nil
+		}
+		return fmt.Errorf("registry: 槽位 %q 不支持 protocol %q（可选：%s）", slot, p, protocol.DeepSeek)
+	}
+	capability := provider.CapabilityOf(slot)
+	if capability != "" && provider.Supports(capability, proto) {
+		return nil
+	}
+	if names := provider.Registered(capability); len(names) > 0 {
+		return fmt.Errorf("registry: 槽位 %q 不支持 protocol %q（可选：%s）",
+			slot, p, strings.Join(names, "/"))
+	}
+	return fmt.Errorf("registry: 槽位 %q 不支持 protocol %q（该能力还没有任何实现注册）", slot, p)
 }
 
 // chainOf 取依赖槽位的 primary + fallbacks（用于组装固定回退链）；槽位不存在返回空。
@@ -266,7 +286,7 @@ func (r *Registry) ChatModel(ctx context.Context, slot string) (port.ChatModel, 
 		// 并按 protocol 取价目表算钱（计费口径见 internal/billing）。
 		model = observability.InstrumentChatModel(model, observability.ModelInfo{
 			Slot:     observability.LLMSlot(slot),
-			Protocol: adapter.ProtocolOf(ref.Protocol),
+			Protocol: protocol.Or(ref.Protocol, protocol.DeepSeek),
 			Model:    ref.Model,
 		})
 		models = append(models, model)
@@ -275,15 +295,15 @@ func (r *Registry) ChatModel(ctx context.Context, slot string) (port.ChatModel, 
 	return &chain{models: models, names: names}, nil
 }
 
-// build 构造单个模型（调用方持有读锁）。对话/视觉槽位按 protocol 分派到
-// adapter——deepseek / openai / qianwen 共用 OpenAI 兼容实现，差异在 base_url；
-// 计费同样按这个 protocol 取价目表（observability 装饰器里做）。
+// build 构造单个模型（调用方持有读锁）。对话/视觉槽位按 protocol 交给 provider
+// 分派——deepseek / openai / qianwen 共用 OpenAI 兼容实现，差异在 base_url 与
+// 少量 wire 细节；计费同样按这个 protocol 取价目表（observability 装饰器里做）。
 func (r *Registry) build(ctx context.Context, slot string, ref ModelRef) (port.ChatModel, error) {
 	key, err := r.opts.Key(ctx, ref.APIKeyName)
 	if err != nil {
 		return nil, fmt.Errorf("registry: slot %q 取 key %q: %w", slot, ref.APIKeyName, err)
 	}
-	return adapter.NewChat(adapter.ChatParams{
+	return provider.NewChat(provider.ChatParams{
 		Protocol: ref.Protocol,
 		APIKey:   key,
 		BaseURL:  ref.BaseURL,

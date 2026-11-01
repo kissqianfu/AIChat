@@ -1,4 +1,4 @@
-// models.go：模型与语音接入——registry 加载、热加载、密钥读取、ElevenLabs+silk 语音引擎。
+// models.go：模型与语音接入——registry 加载、热加载、密钥读取、按 protocol 组装语音引擎。
 package bootstrap
 
 import (
@@ -7,16 +7,15 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/kissqianfu/aichat/internal/billing"
 	deepseekbilling "github.com/kissqianfu/aichat/internal/billing/deepseek"
-	"github.com/kissqianfu/aichat/internal/llm/elevenlabs"
+	"github.com/kissqianfu/aichat/internal/llm/protocol"
+	"github.com/kissqianfu/aichat/internal/llm/provider"
 	"github.com/kissqianfu/aichat/internal/llm/registry"
 	"github.com/kissqianfu/aichat/internal/llm/router"
 	"github.com/kissqianfu/aichat/internal/port"
-	"github.com/kissqianfu/aichat/internal/tts"
 )
 
 // buildModels 从 config.yaml 的 models 段加载模型注册表（含热加载）、
@@ -38,12 +37,12 @@ func (w *wiring) buildModels(ctx context.Context) error {
 	}
 	w.reg = reg
 	w.logger.Info("模型槽位已加载", "default", reg.DefaultSlot(), "slots", reg.SlotNames())
+	// 一行看清「哪个能力由哪些协议实现」：切 protocol 之前先看这行，
+	// 省得配了某家却发现那家没实现这个接口（配置校验也会拦，但日志更直观）。
+	w.logger.Info("模型实现已注册", "interfaces", provider.Summary())
 	// models 段热加载（docs/08 §2.6）：config.yaml 变更 1s 内检测，失败保留旧版并保留快照。
 	w.watchModels(ctx)
 
-	if ref, ok := reg.SlotModel("asr"); ok {
-		w.asrModel = ref.Model
-	}
 	if ref, ok := reg.SlotModel("imagegen"); ok {
 		w.imageModel, w.imageSize = ref.Model, ref.Size
 	}
@@ -100,11 +99,11 @@ type keyGetter interface {
 	Key(ctx context.Context, ref string) (string, error)
 }
 
-// newVoiceEngine 从 config.yaml 的 models.tts 槽位组装语音引擎（docs/08 §3.9）。
-// protocol: elevenlabs（默认，pcm_24000 → 本地 silk 编码）/ breeze（ElevenLabs 同形，
-// mp3 直传免 silk——QQ 官方语音 file_type=3 直接收 mp3，也免去 silk_v3_encoder 依赖）。
+// newVoiceEngine 按 models.tts 槽位的 protocol 构造语音引擎：
+// elevenlabs 走 PCM → 本地 silk 编码；breeze 走 mp3 直传（免 silk 编码器依赖）。
+// 两种产物的差异收在各自的子模块里，这里只负责取密钥、填参数。
 // base_url 为空 = TTS 关闭；调用方需保证槽位存在且 voice 非空。
-func newVoiceEngine(ctx context.Context, reg *registry.Registry, keys keyGetter, logger *slog.Logger) (*tts.Engine, error) {
+func newVoiceEngine(ctx context.Context, reg *registry.Registry, keys keyGetter, logger *slog.Logger) (provider.Synthesizer, error) {
 	ref, ok := reg.SlotModel("tts")
 	if !ok {
 		return nil, errors.New("tts: config.yaml 缺 tts 槽位")
@@ -116,24 +115,21 @@ func newVoiceEngine(ctx context.Context, reg *registry.Registry, keys keyGetter,
 	if err != nil {
 		return nil, fmt.Errorf("tts: 取密钥 %q: %w", ref.APIKeyName, err)
 	}
-	breeze := strings.EqualFold(strings.TrimSpace(ref.Protocol), "breeze")
-	cfg := elevenlabs.Config{APIKey: key, BaseURL: ref.BaseURL, Model: ref.Model, Logger: logger}
-	if breeze {
-		cfg.OutputFormat = "mp3" // 直传模式不请求 PCM
-	}
-	client, err := elevenlabs.New(cfg)
+	synth, err := provider.NewTTS(provider.TTSParams{
+		Protocol: ref.Protocol,
+		BaseURL:  ref.BaseURL,
+		Model:    ref.Model,
+		Voice:    ref.Voice,
+		APIKey:   key,
+		Logger:   logger,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if breeze {
-		logger.Info("语音引擎：breeze 直传模式", "base_url", ref.BaseURL, "model", ref.Model)
-		return tts.NewDirectEngine(client, ref.Voice, "audio/mpeg", logger)
-	}
-	encoder, err := tts.DefaultEncoder()
-	if err != nil {
-		return nil, err
-	}
-	return tts.NewEngine(client, encoder, ref.Voice, logger)
+	logger.Info("语音引擎已启用",
+		"protocol", protocol.Or(ref.Protocol, protocol.DefaultFor("tts")),
+		"base_url", ref.BaseURL, "model", ref.Model, "mime", synth.MIME())
+	return synth, nil
 }
 
 // dailyCheckInterval 是每日任务检查间隔（1 分钟槽位，30s 足够且不浪费）。

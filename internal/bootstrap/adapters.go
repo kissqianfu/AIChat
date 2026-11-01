@@ -10,8 +10,8 @@ import (
 
 	"github.com/kissqianfu/aichat/internal/admin"
 	"github.com/kissqianfu/aichat/internal/limits"
-	"github.com/kissqianfu/aichat/internal/llm/adapter"
-	"github.com/kissqianfu/aichat/internal/llm/openai"
+	"github.com/kissqianfu/aichat/internal/llm/protocol"
+	"github.com/kissqianfu/aichat/internal/llm/provider"
 	"github.com/kissqianfu/aichat/internal/llm/registry"
 	"github.com/kissqianfu/aichat/internal/persona"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
@@ -26,22 +26,6 @@ type guardAdapter struct {
 	guard *limits.Guard
 }
 
-// openAIForSlot 为 OpenAI 兼容能力槽位（asr）构造客户端；
-// 槽位缺失或 base_url 为空（该能力关闭）返回 nil。
-// imagegen 自 2026-11-01 起改由 adapter.NewImage 按 protocol 分派，不再走这里。
-func openAIForSlot(reg *registry.Registry, keys keyGetter, slot string) *openai.Client {
-	if reg == nil || keys == nil {
-		return nil
-	}
-	ref, ok := reg.SlotModel(slot)
-	if !ok || ref.BaseURL == "" {
-		return nil
-	}
-	return openai.New(openai.Config{BaseURL: ref.BaseURL, APIKey: func(ctx context.Context) (string, error) {
-		return keys.Key(ctx, ref.APIKeyName)
-	}})
-}
-
 // Check 实现 orchestrator.Guard。
 func (a *guardAdapter) Check(ctx context.Context, ev port.Event) (bool, string) {
 	if a == nil || a.guard == nil {
@@ -51,39 +35,38 @@ func (a *guardAdapter) Check(ctx context.Context, ev port.Event) (bool, string) 
 	return a.guard.Check(ctx, key)
 }
 
-// asrAdapter 把 OpenAI 兼容/千问 ASR 接成 orchestrator.Transcriber。
-type asrAdapter struct {
-	client   *openai.Client
-	model    string
-	protocol string // openai（默认）/ qianwen
-}
-
-// Transcribe 实现 orchestrator.Transcriber。
-func (a *asrAdapter) Transcribe(ctx context.Context, audio []byte, mime string) (string, error) {
-	if strings.EqualFold(strings.TrimSpace(a.protocol), "qianwen") {
-		return a.client.TranscribeQianwen(ctx, a.model, audio, "voice", mime)
-	}
-	return a.client.Transcribe(ctx, a.model, audio, "voice", mime)
-}
-
-// transcriberFor 只有配置了 provider + asr 槽位才启用 ASR；protocol 由槽位给出（空 = openai）。
-func transcriberFor(provider *openai.Client, model, protocol string) *asrAdapter {
-	if provider == nil || model == "" {
-		return nil
-	}
-	return &asrAdapter{client: provider, model: model, protocol: protocol}
-}
-
-// asrProtocolOf 取 asr 槽位的 protocol（规范化小写；槽位缺失返回空）。
-func asrProtocolOf(reg *registry.Registry) string {
-	if reg == nil {
-		return ""
+// asrFor 按 models.asr 槽位构造转写器（协议由槽位的 protocol 给出，空 = openai）。
+//
+// 返回 (nil, nil) 表示「这个能力是关的」：槽位缺失或 base_url 为空。base_url 空
+// 在本项目里一直是语音能力的成本开关，不拿协议默认端点去偷偷打开它。
+// 真出错（协议没有实现、缺 model 名之类）才返回 error，由调用方告警降级。
+func asrFor(reg *registry.Registry, keys keyGetter, logger *slog.Logger) (provider.Transcriber, error) {
+	if reg == nil || keys == nil {
+		return nil, errors.New("registry 或密钥仓库为空")
 	}
 	ref, ok := reg.SlotModel("asr")
-	if !ok {
-		return ""
+	if !ok || strings.TrimSpace(ref.BaseURL) == "" {
+		return nil, nil
 	}
-	return strings.ToLower(strings.TrimSpace(ref.Protocol))
+	if strings.TrimSpace(ref.Model) == "" {
+		return nil, errors.New("models.asr 缺 model 名")
+	}
+	if strings.TrimSpace(ref.APIKeyName) == "" {
+		return nil, errors.New("models.asr 缺 api_key_name")
+	}
+	tr, err := provider.NewASR(provider.ASRParams{
+		Protocol: ref.Protocol,
+		BaseURL:  ref.BaseURL,
+		Model:    ref.Model,
+		APIKey:   func(ctx context.Context) (string, error) { return keys.Key(ctx, ref.APIKeyName) },
+	})
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("语音转文字已启用",
+		"protocol", protocol.Or(ref.Protocol, protocol.DefaultFor("asr")),
+		"base_url", ref.BaseURL, "model", ref.Model)
+	return tr, nil
 }
 
 // auditWriter 写审计日志（repo.AdminRepo 实现；测试可替换）。
@@ -120,7 +103,7 @@ func imageGenFnFor(reg *registry.Registry, keys keyGetter, model, size string) (
 	if strings.TrimSpace(ref.BaseURL) == "" && strings.TrimSpace(ref.Protocol) == "" {
 		return nil, errors.New("models.imagegen 既没有 base_url 也没有 protocol（按未配置处理）")
 	}
-	fn, err := adapter.NewImage(adapter.ImageParams{
+	fn, err := provider.NewImage(provider.ImageParams{
 		Protocol: ref.Protocol,
 		BaseURL:  ref.BaseURL,
 		Model:    model,
@@ -130,7 +113,7 @@ func imageGenFnFor(reg *registry.Registry, keys keyGetter, model, size string) (
 	if err != nil {
 		return nil, err
 	}
-	// adapter.ImageFunc 与 tools.ImageGenFn 签名相同但分属两层，显式转换，
+	// provider.ImageFunc 与 tools.ImageGenFn 签名相同但分属两层，显式转换，
 	// 免得以后任一侧改签名时被静默的隐式兼容掩盖。
 	return tools.ImageGenFn(fn), nil
 }
