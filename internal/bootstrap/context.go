@@ -52,7 +52,6 @@ func (w *wiring) buildMemory(ctx context.Context) {
 	w.statsObs = stats.NewObserver(memberStatsStore{inner: repo.NewMemberRepo(w.store, w.clk)}, w.clk, w.logger)
 	w.startConsolidation(ctx)
 
-	w.replyCache = w.newReplyCache()
 }
 
 // startConsolidation 每日 03:00 记忆巩固（M7-6c）：R 重算归档/冷删除 + 情景过期清理。
@@ -84,8 +83,6 @@ func (w *wiring) startConsolidation(ctx context.Context) {
 	})
 	w.logger.Info("记忆巩固已排期", "cron", w.cfg.Memory.ConsolidateCron, "tz", w.cfg.App.Timezone)
 }
-
-// newReplyCache 按功能开关选择缓存实现：语义（有向量）/语义（本地）/精确。
 
 // moodKeyOf 读情绪引擎当前占优情绪（读半衰期衰减后的状态，不写库）；失败返回空 = 无权重。
 func (w *wiring) moodKeyOf(ctx context.Context, ev port.Event) string {

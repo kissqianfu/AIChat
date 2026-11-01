@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/kissqianfu/aichat/internal/budget"
-	"github.com/kissqianfu/aichat/internal/cache"
 	"github.com/kissqianfu/aichat/internal/gate"
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
@@ -67,7 +66,6 @@ type Config struct {
 	Extractor         MemoryExtractor                                                   // nil = 不抽取记忆
 	Emotion           EmotionEngine                                                     // nil = 不更新情绪
 	Media             MediaDownloader                                                   // nil = 不下载附件
-	Cache             cache.ReplyCache                                                  // nil = 不缓存回复
 	Guard             Guard                                                             // nil = 不限流/无日配额
 	Transcriber       Transcriber                                                       // nil = 语音不走 ASR（固定兜底）
 	Episode           EpisodeExtractor                                                  // nil = 不生成情景记忆
@@ -225,9 +223,6 @@ func (o *Orchestrator) Replies(ctx context.Context, ev port.Event) ([]port.Outbo
 	if policy.Tier == schedule.TierMaint {
 		return o.textReply(ctx, ev, userText, "维护中，稍后再来找我。")
 	}
-	if cachedOuts, ok, err := o.cachedPath(ctx, ev, userText); err != nil || ok {
-		return cachedOuts, err
-	}
 	return o.generateReply(ctx, ev, userText, policy)
 }
 
@@ -279,24 +274,6 @@ func (o *Orchestrator) resolvePolicy(ctx context.Context, ev port.Event) schedul
 		return defaultPolicy()
 	}
 	return resolved
-}
-
-// cachedPath 缓存命中路径：渲染 + 过额度 + 记录；未命中返回 ok=false 走主生成。
-func (o *Orchestrator) cachedPath(ctx context.Context, ev port.Event, userText string) ([]port.Outbound, bool, error) {
-	cached, ok := o.cachedReply(ctx, ev, userText)
-	if !ok {
-		return nil, false, nil
-	}
-	outs, err := o.renderReply(ctx, cached)
-	if err != nil {
-		return nil, true, err
-	}
-	outs, err = o.applyBudgetOrProactive(ctx, ev, outs)
-	if err != nil {
-		return nil, true, err
-	}
-	o.cfg.Builder.Record(ctx, ev, userText, cached)
-	return outs, true, nil
 }
 
 // generateReply 主生成路径：选模型 → 组上下文 → 调模型（含工具）→ 后处理 → 发送准备。
@@ -366,11 +343,6 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	content = o.truncateReply(content, policy)
 	if safe, reason := safety.Check(content); !safe {
 		content = reason
-	}
-	// 空正文（纯媒体回复）不进缓存：缓存的是"这句话的答法"，
-	// 存一条空串会让下次同样的问题命中后发不出任何东西。
-	if content != "" {
-		o.storeCache(ctx, ev, userText, content)
 	}
 	o.cfg.Logger.Info("模型已生成回复",
 		"event_id", ev.ID,

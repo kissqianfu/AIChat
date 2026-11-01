@@ -12,7 +12,6 @@ import (
 	"github.com/kissqianfu/QQ-SDK/qqtypes"
 	"github.com/kissqianfu/aichat/internal/backup"
 	"github.com/kissqianfu/aichat/internal/budget"
-	"github.com/kissqianfu/aichat/internal/cache"
 	"github.com/kissqianfu/aichat/internal/config"
 	"github.com/kissqianfu/aichat/internal/emotion"
 	"github.com/kissqianfu/aichat/internal/followup"
@@ -144,7 +143,6 @@ type wiring struct {
 	episodeEngine *memory.EpisodeEngine
 	relEngine     *memory.RelationshipEngine
 	statsObs      *stats.Observer // 群成员/互动统计（docs/01 §2.6），nil = 未初始化
-	replyCache    cache.ReplyCache
 
 	budget     *budget.Budget
 	schedStore *repo.ScheduleStore

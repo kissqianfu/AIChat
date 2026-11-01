@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/kissqianfu/aichat/internal/cache"
 	"github.com/kissqianfu/aichat/internal/gate"
 	"github.com/kissqianfu/aichat/internal/limits"
 	"github.com/kissqianfu/aichat/internal/llm/protocol"
@@ -18,16 +17,6 @@ import (
 	"github.com/kissqianfu/aichat/internal/storage/db/repo"
 	"github.com/kissqianfu/aichat/internal/tools"
 )
-
-// newReplyCache 按功能开关装配回复缓存。
-//
-// 2026-11-01 删除语义缓存：只剩精确命中一种实现，不再有阈值/向量分支。
-func (w *wiring) newReplyCache() cache.ReplyCache {
-	if !w.cfg.Features["cache"] {
-		return nil
-	}
-	return cache.NewExact(w.clk, 2048)
-}
 
 // buildToolbox 注册全部工具（docs/01 §4）；语音与看图按配置/槽位可选。
 func (w *wiring) buildToolbox(ctx context.Context) error {
@@ -238,7 +227,6 @@ func (w *wiring) buildOrchestrator(ctx context.Context) (*orchestrator.Orchestra
 		Emotion:           newEmotionAdapter(w.emotionEngine),
 		Media:             media.NewPersister(media.New(nil), "data/media"),
 		Sticker:           stickerCollector,
-		Cache:             w.replyCache,
 		Guard:             &guardAdapter{guard: limits.NewDefaultGuard(w.clk)},
 		Transcriber:       transcriber,
 		Policy:            w.policyResolver(),

@@ -75,8 +75,6 @@ func TestCountersAndLLMObservation(t *testing.T) {
 	CountToolCall("web_search")
 	CountToolError("web_search")
 	CountToolCacheHit()
-	CountReplyCacheLookup()
-	CountReplyCacheHit()
 	CountInterjectSkip()
 	SetQueueDepth(7)
 	SetActiveWindows(3)
@@ -92,17 +90,12 @@ func TestCountersAndLLMObservation(t *testing.T) {
 	}
 }
 
-// TestNewMetrics 覆盖 2026-11-01 新增的丢弃原因/模型失败/缓存查询/端到端耗时/主动消息/回调指标。
+// TestNewMetrics 覆盖 2026-11-01 新增的丢弃原因/模型失败/端到端耗时/主动消息/回调指标。
 func TestNewMetrics(t *testing.T) {
 	CountDropped(DropGate)
 	CountDropped(DropGate)
 	CountDropped(DropBot)
 	CountLLMError(SlotTTS)
-	// 缓存计数是全局累加的（TestMetrics 也调过），断言增量而不是绝对值。
-	lookupsBefore := testutil.ToFloat64(replyCacheLookups)
-	hitsBefore := testutil.ToFloat64(replyCacheHits)
-	CountReplyCacheLookup()
-	CountReplyCacheHit()
 	ObserveReplyLatency(2 * time.Second)
 	CountProactiveSent(ProactiveReminder)
 	ObserveWebhook(401, 5*time.Millisecond)
@@ -115,8 +108,6 @@ func TestNewMetrics(t *testing.T) {
 		{"dropped{gate}", testutil.ToFloat64(droppedTotal.WithLabelValues(string(DropGate))), 2},
 		{"dropped{bot}", testutil.ToFloat64(droppedTotal.WithLabelValues(string(DropBot))), 1},
 		{"llm_errors{tts}", testutil.ToFloat64(llmErrorsTotal.WithLabelValues(string(SlotTTS))), 1},
-		{"cache_lookups", testutil.ToFloat64(replyCacheLookups) - lookupsBefore, 1},
-		{"cache_hits", testutil.ToFloat64(replyCacheHits) - hitsBefore, 1},
 		{"proactive_sent{reminder}", testutil.ToFloat64(proactiveSent.WithLabelValues(string(ProactiveReminder))), 1},
 		{"webhook_requests{401}", testutil.ToFloat64(webhookRequests.WithLabelValues(webhookCode(401))), 1},
 	}

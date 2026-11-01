@@ -67,14 +67,6 @@ var (
 		Name: "aichat_tool_cache_hits_total",
 		Help: "工具结果缓存命中数",
 	})
-	replyCacheLookups = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "aichat_reply_cache_lookups_total",
-		Help: "回复缓存查询数（与 hits 相除得命中率）",
-	})
-	replyCacheHits = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "aichat_reply_cache_hits_total",
-		Help: "回复缓存命中数",
-	})
 	interjectSkipTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "aichat_interject_skip_total",
 		Help: "模型 [SKIP] 自决沉默次数",
@@ -160,12 +152,6 @@ func CountToolError(name string) { toolErrorsTotal.WithLabelValues(name).Inc() }
 
 // CountToolCacheHit 计数工具结果缓存命中。
 func CountToolCacheHit() { toolCacheHits.Inc() }
-
-// CountReplyCacheLookup 计数回复缓存查询。
-func CountReplyCacheLookup() { replyCacheLookups.Inc() }
-
-// CountReplyCacheHit 计数回复缓存命中。
-func CountReplyCacheHit() { replyCacheHits.Inc() }
 
 // CountDropped 计数一条未获回复的消息（reason 见 labels.go）。
 func CountDropped(reason DropReason) { droppedTotal.WithLabelValues(string(reason)).Inc() }

@@ -126,7 +126,6 @@ models:
 
 # 配置级灰度开关（M4-6）：改这里 + 重启即可关掉某能力
 features:
-  cache: true            # 模型回复短期缓存（M4-5）
   memory_extract: true   # 异步记忆抽取（M2-2）
   tools: true            # 工具调用（M1-9）
   followup: true         # 补一句（P1 拟人化）：回复后 45-150s 经四重刹车再判断是否补一句
