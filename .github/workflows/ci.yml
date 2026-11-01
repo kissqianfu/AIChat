@@ -5,14 +5,20 @@ name: ci
 #   build-check  通用语义检查：编译 / go vet / 两个目标交叉编译 / 竞态测试。
 #                全是 Go 生态标准命令，写死在 yml 里不会漂移。
 #   build        交叉编译 linux/amd64，注入提交号，产出 artifact。
-#   deploy       二进制走 stdin 交给服务器 /opt/aichat/deploy.sh，脚本自己
-#                备份 → 安装 → 重启 → 自检 30s → 失败装回旧二进制。
+#   deploy       SSH 直连服务器：先 `cat >` 把二进制送过去，再把
+#                .github/deploy-remote.sh 当剧本用 `sudo -n bash -s` 执行
+#                （备份 → 安装 → 重启 → 自检 30s → 失败装回旧二进制）。
+#                服务器上不安装任何脚本，仓库 HEAD 就是部署逻辑的唯一真相。
+#
+# 需要的仓库 secret 只有四个：SSH_HOST / SSH_PORT / SSH_USER / SSH_PRIVATE_KEY。
+# 主机公钥不存 secret，写死在下面的 Prepare SSH 步骤里做比对（公钥不是秘密，
+# 写死才能挡住中间人）。
 #
 # 质量门分两层，这里要说清：dupl 重复度、gosec/govulncheck、覆盖率门槛
 # 留在本地 scripts/check.sh（不入库）。因此 CI 绿只代表"能编译、能过测试"，
-# 那三项需要 push 前自己跑一次。如果哪天想让它们也拦住部署，再回来加。
+# 那三项需要 push 前自己跑一次。
 #
-# 部署开关是仓库变量 DEPLOY_ENABLED=true；删掉它即停止自动部署，不用改代码。
+# 部署开关是仓库变量 DEPLOY_ENABLED：不配=照常部署，配成 false 即停自动部署。
 on:
   push:
     branches: [main]
@@ -116,15 +122,23 @@ jobs:
 
   deploy:
     needs: build
-    # 仓库变量，不是 secret：删掉即停止自动部署。
-    if: vars.DEPLOY_ENABLED == 'true'
+    # 仓库变量，不是 secret：不配照常部署，配成 false 即停自动部署。
+    if: vars.DEPLOY_ENABLED != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # 连推两次不能让两个部署交叉安装。
     concurrency:
       group: deploy-prod
       cancel-in-progress: false
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
     steps:
+      # 要读 .github/deploy-remote.sh，所以这里必须检出。
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
@@ -141,43 +155,65 @@ jobs:
             echo "当前 ${h} 点（北京时间），在部署窗口内"
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::当前 ${h} 点（北京时间），夜间不部署；需要的话手动 Run workflow"
+            echo "::notice::当前 ${h} 点（北京时间），夜间不自动部署；需要的话手动 Run workflow"
           fi
 
-      # 密钥只在这一步落地到 runner 的临时文件，job 结束 runner 即销毁。
-      # authorized_keys 那边被 command= 锁死，这把钥匙干不了别的事。
+      # 私钥只落到 runner 的临时文件，job 结束 runner 即销毁。
       - name: Prepare SSH
         if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
         env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           set -eu
-          for n in DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+          missing=""
+          for n in SSH_HOST SSH_PORT SSH_USER SSH_PRIVATE_KEY; do
             eval "v=\${$n:-}"
-            if [ -z "$v" ]; then echo "::error::缺少 secret $n"; exit 1; fi
+            [ -n "$v" ] || missing="$missing $n"
           done
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
-          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null && echo "私钥可解析"
+          if [ -n "$missing" ]; then
+            echo "::error::缺少仓库 secret:$missing（Settings → Secrets and variables → Actions）"
+            exit 1
+          fi
 
-      - name: Deploy
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null \
+            || { echo "::error::SSH_PRIVATE_KEY 解析失败：要贴 BEGIN/END 之间的全文"; exit 1; }
+
+          # 主机公钥固定在这里。换机器或重装系统后这里会硬失败——把新公钥
+          # （ssh-keyscan -p <port> -t ed25519 <host>）抄进这一行即可。
+          expected=AAAAC3NzaC1lZDI1NTE5AAAAIGnghEWLJUrTfWDYLHdVvTgm3XNZN2ll7X/To7VH2pXb
+          got=$(ssh-keyscan -T 10 -p "$SSH_PORT" -t ed25519 "$SSH_HOST" 2>/dev/null \
+                | awk '$2=="ssh-ed25519"{print $3}' | head -1 || true)
+          if [ "$got" != "$expected" ]; then
+            echo "::error::主机密钥不匹配：期望 ${expected:0:20}… 实际 ${got:0:20}…"
+            echo "可能是中间人，也可能机器换过；确认无误后更新 ci.yml 里的 expected。"
+            exit 1
+          fi
+          printf '[%s]:%s ssh-ed25519 %s\n' "$SSH_HOST" "$SSH_PORT" "$got" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          echo "私钥可解析，主机密钥校验通过"
+
+      # 二进制走 stdin 落到 /tmp/aichat.incoming，不依赖 scp/sftp。
+      - name: Upload binary
         if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           set -eu
-          cat build-info.txt
-          # 远端命令参数会被 authorized_keys 的 command= 覆盖，随便写一个占位；
-          # 二进制走 stdin（scp/sftp 在这把钥匙上是关闭的）。
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            -o IdentitiesOnly=yes \
-            -o BatchMode=yes \
-            -o ConnectTimeout=15 \
-            -T "$DEPLOY_USER@$DEPLOY_HOST" deploy < aichat-linux
+            -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -T \
+            "$SSH_USER@$SSH_HOST" 'cat > /tmp/aichat.incoming' < aichat-linux
+          echo "已上传 $(stat -c %s aichat-linux) 字节"
+
+      # 剧本从 stdin 送进去执行，服务器上不留文件。
+      - name: Install and verify
+        if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -eu
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -T \
+            "$SSH_USER@$SSH_HOST" 'sudo -n bash -s' < .github/deploy-remote.sh
