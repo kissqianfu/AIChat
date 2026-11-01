@@ -53,10 +53,24 @@ jobs:
         run: GOOS=windows GOARCH=amd64 go build ./...
 
       # -race 需要 cgo，而 ubuntu runner 自带 gcc，这里放开即可。
+      #
+      # 失败时把关键行转成 annotation：job 日志接口要仓库 admin 权限，
+      # 而 annotation 是匿名可读的，排查时不用先登录。
       - name: Test with race detector
         env:
           CGO_ENABLED: "1"
-        run: go test -race -count=1 ./...
+        run: |
+          set +e
+          go test -race -count=1 ./... > /tmp/test.log 2>&1
+          rc=$?
+          tail -80 /tmp/test.log
+          if [ "$rc" -ne 0 ]; then
+            grep -E '^(FAIL|--- FAIL|=== RUN)|WARNING: DATA RACE|^panic:' /tmp/test.log \
+              | head -10 | while IFS= read -r line; do
+                echo "::error::$line"
+              done
+          fi
+          exit "$rc"
 
   build:
     needs: build-check
