@@ -1,4 +1,4 @@
-package orchestrator
+package budget
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	// passiveMax 是同一 msg_id 的被动回复上限（平台硬限制 5 次）。
-	passiveMax = 5
+	// MaxPassive 是同一 msg_id 的被动回复上限（平台硬限制 5 次）。
+	MaxPassive = 5
 	// groupWindow / c2cWindow 是被动回复窗口（群 5min / C2C 60min）。
 	groupWindow = 5 * time.Minute
 	c2cWindow   = 60 * time.Minute
@@ -60,7 +60,7 @@ func (b *Budget) TakeCtx(ctx context.Context, scene port.Scene, msgID string) (i
 		return 0, false
 	}
 	if b.store != nil {
-		if seq, ok, err := b.store.Take(ctx, msgID, windowOf(scene), passiveMax, b.clk.Now()); err == nil {
+		if seq, ok, err := b.store.Take(ctx, msgID, windowOf(scene), MaxPassive, b.clk.Now()); err == nil {
 			return seq, ok
 		}
 	}
@@ -77,12 +77,12 @@ func (b *Budget) PassiveLeft(scene port.Scene, msgID string) int {
 	b.pruneLocked()
 	e, ok := b.entries[msgID]
 	if !ok {
-		return passiveMax
+		return MaxPassive
 	}
 	if b.clk.Now().Sub(e.start) > e.window {
 		return 0
 	}
-	return passiveMax - e.used
+	return MaxPassive - e.used
 }
 
 // Take 消耗一次被动额度，返回 msg_seq（1..5）。
@@ -99,7 +99,7 @@ func (b *Budget) Take(scene port.Scene, msgID string) (seq int, ok bool) {
 		e = &budgetEntry{start: now, window: windowOf(scene)}
 		b.entries[msgID] = e
 	}
-	if now.Sub(e.start) > e.window || e.used >= passiveMax {
+	if now.Sub(e.start) > e.window || e.used >= MaxPassive {
 		return 0, false
 	}
 	e.used++

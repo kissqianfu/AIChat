@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/kissqianfu/aichat/internal/cache"
+	"github.com/kissqianfu/aichat/internal/gate"
 	"github.com/kissqianfu/aichat/internal/limits"
 	"github.com/kissqianfu/aichat/internal/llm/protocol"
 	"github.com/kissqianfu/aichat/internal/media"
@@ -125,8 +126,8 @@ func (w *wiring) buildToolbox(ctx context.Context) error {
 }
 
 // buildGate 构造准入闸门（点名判定 + 活跃窗口 + 插话自决）。
-func (w *wiring) buildGate() *orchestrator.Gate {
-	return orchestrator.NewGate(orchestrator.GateConfig{
+func (w *wiring) buildGate() *gate.Gate {
+	return gate.NewGate(gate.GateConfig{
 		SelfName: w.self.Username,
 		Aliases:  w.persona.Aliases,
 		// features.interject=true：群普通消息（没点名）也全量进主模型，

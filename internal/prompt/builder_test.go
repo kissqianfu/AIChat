@@ -1,5 +1,4 @@
-// toChat 不可信包裹测试（docs/10 §7.5 第 9 条）。
-package orchestrator
+package prompt
 
 import (
 	"context"
@@ -37,12 +36,9 @@ func TestToChatWrapsGroupInboundAsUntrusted(t *testing.T) {
 // （有人明确求助且能答、话题直接说到你）+ 拿不准就沉默。若有人把宽口径
 // 加回去，群里就会重新变成抢话，这里会红。
 func TestInterjectPromptIsNarrow(t *testing.T) {
-	o, err := New(Config{Model: &fakeModel{resp: &port.ChatResponse{Content: "x"}}, Persona: "人设正文"})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	b := New(Config{Persona: "人设正文"})
 	ctx := context.Background()
-	group := o.buildMessages(ctx, messageEvent(), "他们在聊原神", "", "", nil)
+	group := b.Messages(ctx, messageEvent(), "他们在聊原神", "", "", nil)
 	if len(group) == 0 {
 		t.Fatal("buildMessages() 空")
 	}
@@ -58,11 +54,24 @@ func TestInterjectPromptIsNarrow(t *testing.T) {
 		}
 	}
 	// 私聊不注入插话规则（没人和你说话才有"插不插"的问题）。
-	c2c := o.buildMessages(ctx, port.Event{
+	c2c := b.Messages(ctx, port.Event{
 		Scene: port.SceneC2C, TargetID: "u1",
 		Parts: []port.Part{{Kind: port.PartText, Text: "hi"}},
 	}, "hi", "", "", nil)
 	if strings.Contains(c2c[0].Content, "[插话规则]") {
 		t.Fatal("私聊不该有插话规则")
+	}
+}
+
+// messageEvent 造一条群内 @ 机器人事件（与 orchestrator 测试同构）。
+func messageEvent() port.Event {
+	return port.Event{
+		ID:       "EV-1",
+		Type:     port.EvGroupAtMessageCreate,
+		Scene:    port.SceneGroup,
+		TargetID: "g-1",
+		MsgID:    "msg-1",
+		AtMe:     true,
+		Parts:    []port.Part{{Kind: port.PartText, Text: " 你好 "}},
 	}
 }

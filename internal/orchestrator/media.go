@@ -158,6 +158,6 @@ func (o *Orchestrator) GuardAllows(ctx context.Context, ev port.Event) (bool, []
 		o.cfg.Logger.Warn("限流提示发送失败", "event_id", ev.ID, "err", err)
 		return false, nil
 	}
-	o.record(ctx, ev, "", reason)
+	o.cfg.Builder.Record(ctx, ev, "", reason)
 	return false, outs
 }

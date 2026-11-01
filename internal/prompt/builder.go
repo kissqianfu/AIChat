@@ -1,7 +1,10 @@
-package orchestrator
+// Package prompt 组装发给模型的完整输入：system（人设+情绪+插话规则）、
+// 记忆注入、群公共层/用户会话层历史、引用与卡片附注，并负责本轮消息落库。
+package prompt
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
@@ -15,12 +18,35 @@ const (
 	userExchangeLimit = 8
 )
 
-// buildMessages 组装 system + 历史 + 当前用户消息。
+// Config 是组装器的依赖（全部可选：History/Recorder 为 nil 时对应能力降级）。
+type Config struct {
+	// Persona 是启动快照人设正文；PersonaProvider 返回非空时优先（热加载）。
+	Persona         string
+	PersonaProvider func() string
+	History         port.History  // nil = 不装配历史（单轮）
+	Recorder        port.Recorder // nil = 不落库
+	Logger          *slog.Logger  // nil = slog.Default()
+}
+
+// Builder 组装模型输入并落库本轮消息。
+type Builder struct {
+	cfg Config
+}
+
+// New 构造组装器。
+func New(cfg Config) *Builder {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	return &Builder{cfg: cfg}
+}
+
+// Messages 组装 system + 历史 + 当前用户消息。
 //
 // 群聊 = 群公共层（带发言人标签，理解氛围）+ 用户会话层（该用户与 Bot 的往来）；
 // 单聊 = 用户会话层。历史查询失败只告警，降级为无历史（不能因历史丢了本轮回复）。
-func (o *Orchestrator) buildMessages(ctx context.Context, ev port.Event, userText, memText, mood string, images []port.ImageRef) []port.ChatMessage {
-	system := o.personaText()
+func (b *Builder) Messages(ctx context.Context, ev port.Event, userText, memText, mood string, images []port.ImageRef) []port.ChatMessage {
+	system := b.personaText()
 	if mood != "" {
 		system += "\n\n" + mood
 	}
@@ -41,21 +67,21 @@ func (o *Orchestrator) buildMessages(ctx context.Context, ev port.Event, userTex
 	if memText != "" {
 		messages = append(messages, port.ChatMessage{Role: port.ChatRoleSystem, Content: memText})
 	}
-	if o.cfg.History == nil {
+	if b.cfg.History == nil {
 		return append(messages, port.ChatMessage{Role: port.ChatRoleUser, Content: userText, Images: images})
 	}
 
 	if ev.Scene == port.SceneGroup {
-		public, err := o.cfg.History.Recent(ctx, ev.TargetID, groupPublicLimit)
+		public, err := b.cfg.History.Recent(ctx, ev.TargetID, groupPublicLimit)
 		if err != nil {
-			o.cfg.Logger.Warn("读取群公共层失败，降级为无历史", "target_id", ev.TargetID, "err", err)
+			b.cfg.Logger.Warn("读取群公共层失败，降级为无历史", "target_id", ev.TargetID, "err", err)
 		} else {
 			messages = append(messages, toChat(public, true)...)
 		}
 	}
-	exchange, err := o.cfg.History.RecentExchange(ctx, ev.TargetID, ev.Author.ID, userExchangeLimit)
+	exchange, err := b.cfg.History.RecentExchange(ctx, ev.TargetID, ev.Author.ID, userExchangeLimit)
 	if err != nil {
-		o.cfg.Logger.Warn("读取用户会话层失败，降级为无历史", "sender_id", ev.Author.ID, "err", err)
+		b.cfg.Logger.Warn("读取用户会话层失败，降级为无历史", "sender_id", ev.Author.ID, "err", err)
 	} else {
 		messages = append(messages, toChat(exchange, false)...)
 	}
@@ -63,13 +89,13 @@ func (o *Orchestrator) buildMessages(ctx context.Context, ev port.Event, userTex
 }
 
 // personaText 取当前生效的人设正文：热加载 Provider 优先，空串回退启动快照。
-func (o *Orchestrator) personaText() string {
-	if o.cfg.PersonaProvider != nil {
-		if text := o.cfg.PersonaProvider(); text != "" {
+func (b *Builder) personaText() string {
+	if b.cfg.PersonaProvider != nil {
+		if text := b.cfg.PersonaProvider(); text != "" {
 			return text
 		}
 	}
-	return o.cfg.Persona
+	return b.cfg.Persona
 }
 
 // toChat 把历史消息转成模型消息；群公共层加发言人标签，
@@ -103,9 +129,9 @@ func speakerLabel(name string) string {
 	return name + "："
 }
 
-// record 持久化本轮入站/出站消息（失败只告警，不影响已生成的回复）。
-func (o *Orchestrator) record(ctx context.Context, ev port.Event, userText, reply string) {
-	if o.cfg.Recorder == nil {
+// Record 持久化本轮入站/出站消息（失败只告警，不影响已生成的回复）。
+func (b *Builder) Record(ctx context.Context, ev port.Event, userText, reply string) {
+	if b.cfg.Recorder == nil {
 		return
 	}
 	scene := "c2c"
@@ -126,8 +152,8 @@ func (o *Orchestrator) record(ctx context.Context, ev port.Event, userText, repl
 		})
 	}
 	for _, rec := range records {
-		if err := o.cfg.Recorder.SaveMessage(ctx, rec); err != nil {
-			o.cfg.Logger.Warn("消息落库失败", "event_id", ev.ID, "direction", rec.Direction, "err", err)
+		if err := b.cfg.Recorder.SaveMessage(ctx, rec); err != nil {
+			b.cfg.Logger.Warn("消息落库失败", "event_id", ev.ID, "direction", rec.Direction, "err", err)
 		}
 	}
 }

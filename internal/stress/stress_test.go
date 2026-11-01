@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/gate"
 	"github.com/kissqianfu/aichat/internal/llm/registry"
 	"github.com/kissqianfu/aichat/internal/orchestrator"
 	"github.com/kissqianfu/aichat/internal/pipeline"
@@ -102,7 +103,7 @@ func newHarness(t *testing.T) *harness {
 		Persona: "你是小柒，回复简短。",
 		Logger:  logger,
 		Clock:   clk,
-		Gate:    orchestrator.NewGate(orchestrator.GateConfig{SelfName: "小柒"}),
+		Gate:    gate.NewGate(gate.GateConfig{SelfName: "小柒"}),
 	})
 	if err != nil {
 		t.Fatalf("orchestrator.New() error = %v", err)

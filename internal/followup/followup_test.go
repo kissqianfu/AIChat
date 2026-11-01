@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kissqianfu/aichat/internal/orchestrator"
+	"github.com/kissqianfu/aichat/internal/budget"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 )
@@ -38,7 +38,7 @@ func newTestFollowup(t *testing.T, modelAnswer string, dice func() float64) (*Fo
 	t.Helper()
 	sender := &fakeSender{}
 	recorder := &fakeRecorder{}
-	f := New(sender, orchestrator.NewBudget(clock.System()), recorder,
+	f := New(sender, budget.NewBudget(clock.System()), recorder,
 		func(context.Context) (port.ChatModel, error) { return &fakeModel{answer: modelAnswer}, nil },
 		clock.System(), nil, Options{Dice: dice})
 	if f == nil {
@@ -120,7 +120,7 @@ func TestFireBrakes(t *testing.T) {
 	t.Run("额度刹车", func(t *testing.T) {
 		sender := &fakeSender{}
 		clk := clock.System()
-		budget := orchestrator.NewBudget(clk)
+		budget := budget.NewBudget(clk)
 		// 先把该 msg_id 的被动额度耗尽。
 		for i := 0; i < 5; i++ {
 			if _, ok := budget.Take(port.SceneGroup, "msg-1"); !ok {

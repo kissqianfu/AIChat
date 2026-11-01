@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/kissqianfu/aichat/internal/budget"
 	"github.com/kissqianfu/aichat/internal/ingress/qqapi"
-	"github.com/kissqianfu/aichat/internal/orchestrator"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -19,7 +19,7 @@ var (
 // 非线程安全：一次回复一条流，由 orchestrator 的 streamTee 串行驱动。
 type replyStreamer struct {
 	adapter *qqapi.Adapter
-	budget  *orchestrator.Budget
+	budget  *budget.Budget
 	h       *qqapi.StreamHandle
 }
 

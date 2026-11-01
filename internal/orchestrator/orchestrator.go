@@ -13,11 +13,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/budget"
 	"github.com/kissqianfu/aichat/internal/cache"
+	"github.com/kissqianfu/aichat/internal/gate"
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
+	"github.com/kissqianfu/aichat/internal/prompt"
 	"github.com/kissqianfu/aichat/internal/safety"
 	"github.com/kissqianfu/aichat/internal/schedule"
 )
@@ -45,14 +48,17 @@ type Config struct {
 	ModelFor func(ctx context.Context, ev port.Event) (port.ChatModel, error)
 	Persona  string
 	// PersonaProvider 取当前人设正文（热加载用）；nil 或返回空串时回退 Persona。
-	PersonaProvider   func() string
+	PersonaProvider func() string
+	// Builder 组装模型输入与落库（prompt.Builder）；nil 时 New 按
+	// Persona/PersonaProvider/History/Recorder/Logger 自动构造一个。
+	Builder           *prompt.Builder
 	Logger            *slog.Logger
-	History           port.History  // nil = 不装配历史（单轮）
-	Recorder          port.Recorder // nil = 不落库
-	Budget            *Budget       // nil = 不分段/不限额（测试或降级）
-	Renderer          port.Renderer // nil = 纯文本 + 语义切分
+	History           port.History   // nil = 不装配历史（单轮）
+	Recorder          port.Recorder  // nil = 不落库
+	Budget            *budget.Budget // nil = 不分段/不限额（测试或降级）
+	Renderer          port.Renderer  // nil = 纯文本 + 语义切分
 	Capability        port.Capability
-	Gate              *Gate                                                             // nil = 默认（单聊+群 @）
+	Gate              *gate.Gate                                                        // nil = 默认（单聊+群 @）
 	Toolbox           Toolbox                                                           // nil = 不启用工具
 	Memory            port.Memory                                                       // nil = 不读写记忆
 	Extractor         MemoryExtractor                                                   // nil = 不抽取记忆
@@ -145,6 +151,15 @@ func New(cfg Config) (*Orchestrator, error) {
 	if cfg.Clock == nil {
 		cfg.Clock = clock.System()
 	}
+	if cfg.Builder == nil {
+		cfg.Builder = prompt.New(prompt.Config{
+			Persona:         cfg.Persona,
+			PersonaProvider: cfg.PersonaProvider,
+			History:         cfg.History,
+			Recorder:        cfg.Recorder,
+			Logger:          cfg.Logger,
+		})
+	}
 	return &Orchestrator{cfg: cfg, clock: cfg.Clock}, nil
 }
 
@@ -190,7 +205,7 @@ func (o *Orchestrator) Replies(ctx context.Context, ev port.Event) ([]port.Outbo
 	}
 	// 引用消息（103）与卡片（3）把被引用文本/卡片摘要注入本轮输入，
 	// 让模型知道"用户在针对什么说话"（docs/01 §2.9）；随 userText 进历史与缓存。
-	userText += contextNoteOf(ev)
+	userText += o.cfg.Builder.Note(ev)
 	userText, outs, done, err := o.shortCircuit(ctx, ev, userText)
 	if err != nil || done {
 		return outs, err
@@ -245,7 +260,7 @@ func (o *Orchestrator) textReply(ctx context.Context, ev port.Event, userText, r
 	if err != nil {
 		return nil, err
 	}
-	o.record(ctx, ev, userText, reply)
+	o.cfg.Builder.Record(ctx, ev, userText, reply)
 	return outs, nil
 }
 
@@ -276,7 +291,7 @@ func (o *Orchestrator) cachedPath(ctx context.Context, ev port.Event, userText s
 	if err != nil {
 		return nil, true, err
 	}
-	o.record(ctx, ev, userText, cached)
+	o.cfg.Builder.Record(ctx, ev, userText, cached)
 	return outs, true, nil
 }
 
@@ -314,7 +329,7 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 		model = streamModel
 	}
 	resp, mediaBlocks, err := o.chatWithTools(toolCtx, model, port.ChatRequest{
-		Messages:  o.buildMessages(ctx, ev, userText+mediaNote, memText, mood, images),
+		Messages:  o.cfg.Builder.Messages(ctx, ev, userText+mediaNote, memText, mood, images),
 		MaxTokens: 1024,
 	}, ev.Scene, allowTools, &audioSent)
 	if err != nil {
@@ -340,7 +355,7 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	// 输出 [SKIP] = 不插话。只落库用户消息（进上下文，后续接得上），不发送、不进缓存。
 	if isSkipReply(content) {
 		observability.CountInterjectSkip()
-		o.record(ctx, ev, userText, "")
+		o.cfg.Builder.Record(ctx, ev, userText, "")
 		o.cfg.Logger.Info("模型选择不插话", "event_id", ev.ID)
 		return nil, ErrIgnored
 	}
@@ -364,7 +379,7 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	if resp.Streamed {
 		// 私聊流式（docs/01 §2.8）：正文已随流送达，不再渲染/出站；
 		// 工具媒体（表情包等）仍以普通出站补发（额度在流式 Start 已记 1 次）。
-		o.record(ctx, ev, userText, content)
+		o.cfg.Builder.Record(ctx, ev, userText, content)
 		o.extractAsync(ev, userText)
 		o.maybeSummarize(ev)
 		o.maybeSummarizeRelationship(ev)
@@ -398,7 +413,7 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	}
 	// 纯媒体回复也要在历史里留个记号，否则模型下一轮看不到自己刚发过语音，
 	// 很可能再发一遍。占位文本只进库，不发送。
-	o.record(ctx, ev, userText, recordedReply(content, mediaBlocks))
+	o.cfg.Builder.Record(ctx, ev, userText, recordedReply(content, mediaBlocks))
 	o.extractAsync(ev, userText)
 	o.maybeSummarize(ev)
 	o.maybeSummarizeRelationship(ev)
@@ -498,7 +513,7 @@ func (o *Orchestrator) allowed(ctx context.Context, ev port.Event) (bool, observ
 		return true, ""
 	}
 	reason := o.cfg.Gate.Check(ctx, ev)
-	if reason == GateDeny {
+	if reason == gate.GateDeny {
 		return false, observability.DropGate
 	}
 	// 档位闸（2026-11-01）：自决插话只在允许主动的档位放行——上班在忙、
@@ -507,7 +522,7 @@ func (o *Orchestrator) allowed(ctx context.Context, ev port.Event) (bool, observ
 	// 只拦 GateSelfDecide：@、点名、私聊、活跃窗口内的追问都是"用户在跟
 	// 机器人说话"，属被动回复，任何时段都该回，否则 @ 了没反应更难受。
 	// 拦在闸门这一层还省了一次模型调用（群里闲聊不再产生 token）。
-	if reason == GateSelfDecide {
+	if reason == gate.GateSelfDecide {
 		policy := o.resolvePolicy(ctx, ev)
 		if !policy.Caps.Proactive {
 			o.cfg.Logger.Info("档位禁止自决插话",

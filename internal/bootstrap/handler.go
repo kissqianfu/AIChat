@@ -10,6 +10,7 @@ import (
 
 	"github.com/kissqianfu/QQ-SDK/event"
 	"github.com/kissqianfu/aichat/internal/admin"
+	"github.com/kissqianfu/aichat/internal/budget"
 	"github.com/kissqianfu/aichat/internal/followup"
 	"github.com/kissqianfu/aichat/internal/ingress/qqapi"
 	"github.com/kissqianfu/aichat/internal/ingress/qqevent"
@@ -26,7 +27,7 @@ import (
 // statsObs 非 nil 时做群成员/互动统计（docs/01 §2.6）。
 // 插话自决（2026-11-01）：群普通消息直接进主模型，模型输出 [SKIP] 自决沉默；
 // 机器人回复成功的群开 3 分钟活跃窗口，窗口内追问/插话免点名直接进模型。
-func newEventHandler(sender *qqapi.Adapter, orch *orchestrator.Orchestrator, budget *orchestrator.Budget,
+func newEventHandler(sender *qqapi.Adapter, orch *orchestrator.Orchestrator, budget *budget.Budget,
 	keyCmd *admin.KeyCommand, memCmd *admin.MemoryCommand,
 	authCmd *admin.AuthCommand, hoursCmd *admin.HoursCommand, disp *admin.Dispatcher,
 	groupRepo *repo.GroupRepo, banRepo *repo.BanRepo, events *repo.EventRepo, selfID string, logger *slog.Logger,

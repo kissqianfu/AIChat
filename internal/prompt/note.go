@@ -1,4 +1,4 @@
-package orchestrator
+package prompt
 
 import (
 	"strings"
@@ -14,9 +14,9 @@ const (
 	maxArkRunes = 60
 )
 
-// contextNoteOf 把引用消息/卡片的结构化信息拼成本轮输入的附注（docs/01 §2.9）。
+// Note 把引用消息/卡片的结构化信息拼成本轮输入的附注（docs/01 §2.9）。
 // 返回值直接拼在用户文本后面：随 userText 进历史、缓存与记忆，模型能看到"用户在针对什么说话"。
-func contextNoteOf(ev port.Event) string {
+func (b *Builder) Note(ev port.Event) string {
 	note := ""
 	if ev.MessageType == 103 {
 		note += quoteNoteOf(ev.Elements)
@@ -69,4 +69,16 @@ func arkNoteOf(ark *port.Ark) string {
 		title = string(runes[:maxArkRunes])
 	}
 	return "\n（分享了一张" + kind + "：" + title + "）"
+}
+
+// firstText 取第一段文本。与 orchestrator/gate/admin/followup 的私有副本同源
+// （归一化入口 platform/text.NormalizeInbound）；port 零依赖铁律与 platform
+// 无 import port 先例，故各包保留一份。
+func firstText(parts []port.Part) string {
+	for _, p := range parts {
+		if p.Kind == port.PartText {
+			return text.NormalizeInbound(p.Text)
+		}
+	}
+	return ""
 }

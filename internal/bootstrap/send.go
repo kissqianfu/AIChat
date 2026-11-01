@@ -5,8 +5,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/kissqianfu/aichat/internal/budget"
 	"github.com/kissqianfu/aichat/internal/ingress/qqapi"
-	"github.com/kissqianfu/aichat/internal/orchestrator"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -28,7 +28,7 @@ func ownerNotifier(sender *qqapi.Adapter, logger *slog.Logger) func(context.Cont
 
 // sendText 发一条文本回复（管理指令回复；同样消耗被动额度）。
 // 默认 markdown 形态（docs/01 §8.2）；发送失败不降级重试（指令回复简短，markdown 权限异常属罕见）。
-func sendText(ctx context.Context, sender *qqapi.Adapter, budget *orchestrator.Budget,
+func sendText(ctx context.Context, sender *qqapi.Adapter, budget *budget.Budget,
 	ev port.Event, text string, logger *slog.Logger) {
 	if text == "" {
 		return
@@ -56,7 +56,7 @@ func sendText(ctx context.Context, sender *qqapi.Adapter, budget *orchestrator.B
 }
 
 // sendMediaBlocks 发一条富媒体消息（/draw 的图片；同样消耗被动额度，失败只告警）。
-func sendMediaBlocks(ctx context.Context, sender *qqapi.Adapter, budget *orchestrator.Budget,
+func sendMediaBlocks(ctx context.Context, sender *qqapi.Adapter, budget *budget.Budget,
 	ev port.Event, blocks []port.Block, logger *slog.Logger) {
 	if len(blocks) == 0 {
 		return

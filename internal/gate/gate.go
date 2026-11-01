@@ -1,4 +1,4 @@
-package orchestrator
+package gate
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
+	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -137,4 +138,16 @@ func (g *Gate) inWindow(groupID string) bool {
 	defer g.mu.Unlock()
 	last, ok := g.active[groupID]
 	return ok && g.clk.Now().Sub(last) < activeWindow
+}
+
+// firstText 取第一段文本。与 orchestrator/admin/followup 各自的私有 firstText
+// 同源（归一化入口 platform/text.NormalizeInbound）：port 有零依赖铁律放不进
+// FirstText，platform 无 import port 先例，故各包保留一份 8 行小函数。
+func firstText(parts []port.Part) string {
+	for _, p := range parts {
+		if p.Kind == port.PartText {
+			return text.NormalizeInbound(p.Text)
+		}
+	}
+	return ""
 }

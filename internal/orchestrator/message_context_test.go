@@ -83,12 +83,3 @@ func TestArkContextInjected(t *testing.T) {
 		t.Fatalf("user 消息缺卡片注解：%q", got)
 	}
 }
-
-func TestArkNoteWithoutTitle(t *testing.T) {
-	if note := arkNoteOf(&port.Ark{ArkName: "位置"}); note != "\n（分享了一张位置）" {
-		t.Fatalf("arkNoteOf = %q", note)
-	}
-	if note := arkNoteOf(nil); note != "" {
-		t.Fatalf("arkNoteOf(nil) = %q", note)
-	}
-}

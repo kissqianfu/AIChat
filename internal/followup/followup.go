@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kissqianfu/aichat/internal/orchestrator"
+	"github.com/kissqianfu/aichat/internal/budget"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
@@ -59,7 +59,7 @@ type ModelSource func(ctx context.Context) (port.ChatModel, error)
 // 依赖不齐（sender/model 缺失）时 New 返回 nil，调用方直接判空跳过。
 type Followup struct {
 	sender   port.Sender
-	budget   *orchestrator.Budget
+	budget   *budget.Budget
 	recorder port.Recorder
 	model    ModelSource
 	clk      clock.Clock
@@ -77,7 +77,7 @@ type activity struct {
 }
 
 // New 构造补一句管理器。
-func New(sender port.Sender, budget *orchestrator.Budget, recorder port.Recorder,
+func New(sender port.Sender, budget *budget.Budget, recorder port.Recorder,
 	model ModelSource, clk clock.Clock, logger *slog.Logger, opts Options) *Followup {
 	if sender == nil || model == nil {
 		return nil

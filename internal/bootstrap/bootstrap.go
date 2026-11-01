@@ -11,6 +11,7 @@ import (
 
 	"github.com/kissqianfu/QQ-SDK/qqtypes"
 	"github.com/kissqianfu/aichat/internal/backup"
+	"github.com/kissqianfu/aichat/internal/budget"
 	"github.com/kissqianfu/aichat/internal/cache"
 	"github.com/kissqianfu/aichat/internal/config"
 	"github.com/kissqianfu/aichat/internal/emotion"
@@ -144,7 +145,7 @@ type wiring struct {
 	statsObs      *stats.Observer // 群成员/互动统计（docs/01 §2.6），nil = 未初始化
 	replyCache    cache.ReplyCache
 
-	budget     *orchestrator.Budget
+	budget     *budget.Budget
 	schedStore *repo.ScheduleStore
 	scheduler  *schedule.Scheduler
 	proactive  *proactiveAdapter
@@ -247,7 +248,7 @@ func (w *wiring) openRepos() {
 	}, w.logger, w.clk).WithDailyCap(w.cfg.Emotion.MaxDailyDelta)
 	w.logsRepo = repo.NewCallLogRepo(w.store, w.clk)
 
-	w.budget = orchestrator.NewBudgetWithStore(w.clk, repo.NewBudgetRepo(w.store, w.clk))
+	w.budget = budget.NewBudgetWithStore(w.clk, repo.NewBudgetRepo(w.store, w.clk))
 	w.schedStore = repo.NewScheduleStore(w.store, w.clk)
 	w.scheduler = schedule.New(w.clk, w.schedStore).WithExceptions(w.schedStore).WithWindows(w.scheduleWindows())
 	w.proactive = newProactiveAdapter(w.store, w.clk)
