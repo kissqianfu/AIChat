@@ -1,10 +1,8 @@
-# 构建产物（单二进制 ./aichat）
+# 构建产物（单二进制 ./aichat、测试与覆盖率文件）
 /aichat
-/aichat.exe
 *.exe
 *.test
 *.out
-cover.out
 /cover
 cover.*
 
@@ -12,9 +10,8 @@ cover.*
 /data/
 
 # 本地配置覆盖：可能含密钥，绝不进 git（08 §2.8）
+# 一条通配覆盖 config.local.yaml / models.local.yaml 等全部 *.local.yaml
 /*.local.yaml
-/config.local.yaml
-/models.local.yaml
 
 # 编辑器 / 系统
 .idea/
@@ -25,16 +22,11 @@ Thumbs.db
 
 # 日志
 *.log
-_local/
-data/
-config.local.yaml
 
-# 本地文档与运维资产：只留本地，不上传 git
-/docs/
-/DEV_PROMPT.md
-/deploy/
+# 本地运维资产：只留本地，不上传 git
+# _local/ 目录已清空，规则留着防再建；scripts/ 是四道闸与部署脚本，按约定不入库
+_local/
 /scripts/
-/test/
 
 # go.work 是本机把 QQ-SDK 的 sibling 目录接进构建用的，只对本机成立。
 # CI 与别人 clone 下来的构建走 go.mod 里的 tag（v0.1.0），两边同源。
