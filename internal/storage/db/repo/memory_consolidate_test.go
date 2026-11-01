@@ -93,12 +93,16 @@ func TestMemoryRecallPinnedBonus(t *testing.T) {
 	}
 }
 
-// TestMMRSelectDiversity 验证 MMR 去冗余（同向重复项让位给多样项）。
+// TestMMRSelectDiversity 验证 MMR 去冗余：几乎重复的高分项让位给更多样的项。
+//
+// 2026-11-01 删除 embed 后相似度只有 bigram Jaccard 一种，所以这组数据用
+// "文本完全相同"来表达重复（Jaccard=1），多样性项则完全不相交（Jaccard=0），
+// 判定不依赖任何向量。
 func TestMMRSelectDiversity(t *testing.T) {
 	items := []port.MemoryItem{
-		{ID: 1, Score: 1.0, Vec: []float32{1, 0}, Content: "喜欢猫"},
-		{ID: 2, Score: 0.95, Vec: []float32{1, 0.01}, Content: "喜欢猫猫"},
-		{ID: 3, Score: 0.6, Vec: []float32{0, 1}, Content: "喜欢狗"},
+		{ID: 1, Score: 1.0, Content: "今天天气不错"},
+		{ID: 2, Score: 0.95, Content: "今天天气不错"},
+		{ID: 3, Score: 0.8, Content: "周末去爬山"},
 	}
 	got := mmrSelect(items, 2, 0.7)
 	if len(got) != 2 {
@@ -111,7 +115,7 @@ func TestMMRSelectDiversity(t *testing.T) {
 	if same := mmrSelect(items[:1], 5, 0.7); len(same) != 1 {
 		t.Fatalf("mmrSelect(short) = %+v", same)
 	}
-	// 无向量时用词面 Jaccard：同文本的第二条会被压掉。
+	// 同分场景：重复项在同分下先被选，多样性项随后补位。
 	textItems := []port.MemoryItem{
 		{ID: 10, Score: 1.0, Content: "今天天气不错"},
 		{ID: 11, Score: 0.9, Content: "今天天气不错"},

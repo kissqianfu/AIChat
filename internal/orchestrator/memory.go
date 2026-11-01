@@ -56,25 +56,18 @@ func trimRememberPrefix(text string) (string, bool) {
 	return "", false
 }
 
-// recallQuery 组装召回请求：有 embedder 时补上 query 向量，失败回退 bigram（不阻塞回复）。
+// recallQuery 组装召回请求。
+//
+// 2026-11-01 删除 embed 槽位后不再预计算查询向量：召回恒定走
+// bigram 粗筛 + 词面精排，与是否配置外部向量服务无关。
 func (o *Orchestrator) recallQuery(ctx context.Context, ev port.Event, userText string) port.RecallQuery {
-	q := port.RecallQuery{
+	return port.RecallQuery{
 		Scene:     ev.Scene,
 		TargetID:  ev.TargetID,
 		SpeakerID: ev.Author.ID,
 		Text:      userText,
 		TopK:      5,
 	}
-	if o.cfg.Embed == nil {
-		return q
-	}
-	vec, err := o.cfg.Embed(ctx, userText)
-	if err != nil {
-		o.cfg.Logger.Warn("召回向量生成失败，回退 bigram", "event_id", ev.ID, "err", err)
-		return q
-	}
-	q.Vec = vec
-	return q
 }
 
 // recallMemory 召回相关记忆并返回注入用的 system 文本 + 被召回 id。

@@ -24,10 +24,6 @@ func (w *wiring) buildMemory(ctx context.Context) {
 		}, w.logger)
 	}
 	memEngine := memory.NewEngine(memExtractor, w.memoryRepo, w.logger, w.clk)
-	// 有 embed 槽位（base_url 非空）才回填向量；否则检索走 bigram 精排（离线回退）。
-	if embedder := embedderFor(openAIForSlot(w.reg, w.keyRepo, "embed"), w.embedModel); embedder != nil {
-		memEngine = memEngine.WithEmbedder(embedder)
-	}
 	memEngine.StartReviewLoop(ctx, time.Hour)
 	if w.cfg.Features["memory_extract"] {
 		extractor = memEngine
@@ -46,7 +42,6 @@ func (w *wiring) buildMemory(ctx context.Context) {
 	w.statsObs = stats.NewObserver(memberStatsStore{inner: repo.NewMemberRepo(w.store, w.clk)}, w.clk, w.logger)
 	w.startConsolidation(ctx)
 
-	w.embedOne = queryEmbedder(openAIForSlot(w.reg, w.keyRepo, "embed"), w.embedModel)
 	w.replyCache = w.newReplyCache()
 }
 

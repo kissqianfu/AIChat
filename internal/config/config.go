@@ -116,11 +116,10 @@ type WindowConfig struct {
 // ModelsConfig 是模型槽位（原 configs/models.yaml 并入，2026-10-31）：
 // 每个引用自带 base_url 与 api_key_name（→ api_key 表），不再有 providers 中转。
 // 对话/视觉槽位走 OpenAI 兼容协议（deepseek 客户端）；tts 槽位固定 ElevenLabs 协议；
-// embed/asr/imagegen/tts 的 base_url 为空 = 该能力关闭。
+// asr/imagegen/tts 的 base_url 为空 = 该能力关闭。
 type ModelsConfig struct {
 	Chat     map[string]ModelSlot `yaml:"chat"` // chat.fast 必填（默认槽位写死代码）
 	Vision   *ModelSlot           `yaml:"vision"`
-	Embed    *ModelSlot           `yaml:"embed"`
 	Asr      *ModelSlot           `yaml:"asr"`
 	TTS      *ModelSlot           `yaml:"tts"`
 	ImageGen *ModelSlot           `yaml:"imagegen"`

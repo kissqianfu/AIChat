@@ -18,18 +18,12 @@ import (
 	"github.com/kissqianfu/aichat/internal/tools"
 )
 
-// newReplyCache 按功能开关选择缓存实现：语义（有向量）/语义（本地）/精确。
-// 阈值两档：本地 bigram 余弦分布偏低用 0.45；真实 embedding 语义相近即可达 0.6+，
-// 用 0.82 只命中几乎同问的问题——避免"换说法就复读同一句"的人机感（2026-11-01）。
+// newReplyCache 按功能开关装配回复缓存。
+//
+// 2026-11-01 删除语义缓存：只剩精确命中一种实现，不再有阈值/向量分支。
 func (w *wiring) newReplyCache() cache.ReplyCache {
 	if !w.cfg.Features["cache"] {
 		return nil
-	}
-	if w.cfg.Features["semantic_cache"] && w.embedOne != nil {
-		return cache.NewSemanticWithEmbedder(w.clk, 0.82, w.embedOne)
-	}
-	if w.cfg.Features["semantic_cache"] {
-		return cache.NewSemantic(w.clk, 0.45)
 	}
 	return cache.NewExact(w.clk, 2048)
 }
@@ -212,7 +206,6 @@ func (w *wiring) buildOrchestrator() (*orchestrator.Orchestrator, error) {
 		Gate:              w.buildGate(),
 		Toolbox:           &loggingToolbox{inner: w.toolbox, repo: w.logsRepo},
 		Memory:            w.memoryRepo,
-		Embed:             w.embedOne,
 		Extractor:         w.memExtractor,
 		Episode:           w.episodeEngine,
 		EpisodeTurns:      w.cfg.Memory.EpisodeTurns,

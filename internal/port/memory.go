@@ -18,14 +18,14 @@ const (
 )
 
 // RecallQuery 是一次记忆召回请求。
+//
+// 2026-11-01 删除 embed 槽位后不再携带查询向量：检索恒定走
+// bigram 粗筛 + 词面精排（docs/02 §1.2），不依赖任何外部向量服务。
 type RecallQuery struct {
 	Scene     Scene
 	TargetID  string
 	SpeakerID string // 隐私闸门：只召回本人 + 本群
 	Text      string
-	// Vec 是查询文本的向量（有 embed 槽位时由编排层算好）。
-	// 空 = 没有 provider，检索走 bigram 粗筛 + 词面精排（离线回退）。
-	Vec       []float32
 	MaxTokens int
 	TopK      int
 }
@@ -40,7 +40,6 @@ type MemoryItem struct {
 	Predicate  string
 	Object     string
 	Content    string
-	Vec        []float32 // embedding（有 embed 槽位时回填；精排用，不注入 prompt）
 	Confidence float64
 	Importance float64 // 0~1
 	Stability  float64 // 艾宾浩斯 S

@@ -2,7 +2,6 @@ package repo
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -74,96 +73,6 @@ func TestMemoryRepoRememberRecall(t *testing.T) {
 	}
 }
 
-func TestMemoryRepoVectorRecall(t *testing.T) {
-	store := openTestStore(t)
-	repo := NewMemoryRepo(store, clock.NewFrozen(time.UnixMilli(1700000000000)))
-	ctx := context.Background()
-
-	items := []port.MemoryItem{
-		{Scope: port.ScopeUser, OwnerID: "u1", Kind: "preference", Content: "用户喜欢毛茸茸的小动物", Importance: 0.5},
-		{Scope: port.ScopeUser, OwnerID: "u1", Kind: "fact", Content: "用户周五要交季度报表", Importance: 0.5},
-	}
-	if err := repo.Remember(ctx, items); err != nil {
-		t.Fatalf("Remember() error = %v", err)
-	}
-	pending, err := repo.PendingEmbeddings(ctx, 10)
-	if err != nil || len(pending) != 2 {
-		t.Fatalf("PendingEmbeddings() = %d/%v", len(pending), err)
-	}
-	for _, item := range pending {
-		vec := []float32{1, 0}
-		if strings.Contains(item.Content, "小动物") {
-			vec = []float32{0, 1}
-		}
-		if err := repo.SetEmbedding(ctx, item.ID, vec); err != nil {
-			t.Fatalf("SetEmbedding() error = %v", err)
-		}
-	}
-	if rest, err := repo.PendingEmbeddings(ctx, 10); err != nil || len(rest) != 0 {
-		t.Fatalf("PendingEmbeddings(after set) = %d/%v", len(rest), err)
-	}
-
-	// query 文本与两条都无 bigram 交集；只有向量能把"小动物"排前面。
-	recalled, err := repo.Recall(ctx, port.RecallQuery{
-		Scene: port.SceneC2C, TargetID: "u1", SpeakerID: "u1", Text: "zzz", Vec: []float32{0, 1}, TopK: 5,
-	})
-	if err != nil {
-		t.Fatalf("Recall(vector) error = %v", err)
-	}
-	if len(recalled) != 2 {
-		t.Fatalf("recalled = %+v", recalled)
-	}
-	if recalled[0].Content != "用户喜欢毛茸茸的小动物" {
-		t.Fatalf("向量精排未生效: %+v", recalled)
-	}
-	if len(recalled[0].Vec) != 2 {
-		t.Fatalf("向量未回读: %+v", recalled[0])
-	}
-}
-
-func TestMemoryRepoVectorDimMismatch(t *testing.T) {
-	store := openTestStore(t)
-	repo := NewMemoryRepo(store, clock.NewFrozen(time.UnixMilli(1700000000000)))
-	ctx := context.Background()
-
-	if err := repo.Remember(ctx, []port.MemoryItem{{
-		Scope: port.ScopeUser, OwnerID: "u1", Kind: "fact", Content: "用户周五要交季度报表", Importance: 0.5,
-	}}); err != nil {
-		t.Fatalf("Remember() error = %v", err)
-	}
-	pending, err := repo.PendingEmbeddings(ctx, 10)
-	if err != nil || len(pending) != 1 {
-		t.Fatalf("PendingEmbeddings() = %d/%v", len(pending), err)
-	}
-	if err := repo.SetEmbedding(ctx, pending[0].ID, []float32{1, 2, 3}); err != nil {
-		t.Fatalf("SetEmbedding() error = %v", err)
-	}
-	// 换 embed 模型导致维度不一致 → 余弦被跳过，回退 bigram 精排，不 panic。
-	recalled, err := repo.Recall(ctx, port.RecallQuery{
-		Scene: port.SceneC2C, TargetID: "u1", SpeakerID: "u1", Text: "季度报表", Vec: []float32{1, 0}, TopK: 5,
-	})
-	if err != nil || len(recalled) != 1 {
-		t.Fatalf("Recall(dim mismatch) = %+v/%v", recalled, err)
-	}
-}
-
-func TestMemoryVectorCodec(t *testing.T) {
-	vec := []float32{0.25, -1.5, 3}
-	got := decodeVector(encodeVector(vec))
-	if len(got) != 3 || got[0] != 0.25 || got[1] != -1.5 || got[2] != 3 {
-		t.Fatalf("encode/decode = %v", got)
-	}
-	if got := decodeVector(nil); got != nil {
-		t.Fatalf("decode(nil) = %v", got)
-	}
-	if got := decodeVector([]byte{1, 2, 3}); got != nil {
-		t.Fatalf("decode(非法长度) = %v", got)
-	}
-	if encodeVector(nil) != nil {
-		t.Fatal("encode(nil) != nil")
-	}
-	// 空向量写回是 no-op（不清空已有向量）。
-	if err := NewMemoryRepo(openTestStore(t), clock.System()).SetEmbedding(context.Background(), 1, nil); err != nil {
-		t.Fatalf("SetEmbedding(nil) error = %v", err)
-	}
-}
+// 2026-11-01 删除 embed：TestMemoryRepoVectorRecall / VectorDimMismatch /
+// TestMemoryVectorCodec 随向量能力一起移除。召回只剩词面一条路径，
+// 由 TestMemoryRepoRememberRecall 覆盖。

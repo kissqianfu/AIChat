@@ -83,9 +83,6 @@ type fakeStore struct {
 	remembered []port.MemoryItem
 	due        []port.MemoryItem
 	reviews    []reviewCall
-	pending    []port.MemoryItem
-	embeddings map[int64][]float32
-	setErr     error
 
 	consolidateCalls int
 	archived         int
@@ -111,42 +108,9 @@ func (f *fakeStore) ApplyReview(_ context.Context, id int64, stability, importan
 	f.reviews = append(f.reviews, reviewCall{id: id, stability: stability, importance: importance, next: next})
 	return nil
 }
-func (f *fakeStore) SetEmbedding(_ context.Context, id int64, vec []float32) error {
-	if f.setErr != nil {
-		return f.setErr
-	}
-	if f.embeddings == nil {
-		f.embeddings = make(map[int64][]float32)
-	}
-	f.embeddings[id] = vec
-	for i, item := range f.pending {
-		if item.ID == id {
-			f.pending = append(f.pending[:i], f.pending[i+1:]...)
-			break
-		}
-	}
-	return nil
-}
-func (f *fakeStore) PendingEmbeddings(context.Context, int) ([]port.MemoryItem, error) {
-	return f.pending, nil
-}
-
 func (f *fakeStore) Consolidate(context.Context, time.Time, float64, float64) (int, int, error) {
 	f.consolidateCalls++
 	return f.archived, f.purged, f.consolidateErr
-}
-
-// fakeEmbedder 返回预设向量。
-type fakeEmbedder struct {
-	vecs [][]float32
-	err  error
-}
-
-func (f *fakeEmbedder) Embed(context.Context, []string) ([][]float32, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.vecs, nil
 }
 
 func TestEngineProcess(t *testing.T) {
@@ -188,64 +152,6 @@ func TestReviewOnce(t *testing.T) {
 	}
 	if !r.next.After(now) {
 		t.Fatalf("next = %v", r.next)
-	}
-}
-
-func TestBackfillEmbeddings(t *testing.T) {
-	store := &fakeStore{pending: []port.MemoryItem{
-		{ID: 1, Content: "用户喜欢猫"},
-		{ID: 2, Content: "用户对猫毛过敏"},
-	}}
-	embedder := &fakeEmbedder{vecs: [][]float32{{1, 0}, {0, 1}}}
-	engine := NewEngine(nil, store, nil, nil).WithEmbedder(embedder)
-	done, err := engine.BackfillEmbeddings(context.Background())
-	if err != nil || done != 2 {
-		t.Fatalf("BackfillEmbeddings() = %d/%v", done, err)
-	}
-	if len(store.embeddings) != 2 || len(store.pending) != 0 {
-		t.Fatalf("embeddings = %+v, pending = %+v", store.embeddings, store.pending)
-	}
-}
-
-func TestBackfillEmbeddingsSkipped(t *testing.T) {
-	store := &fakeStore{pending: []port.MemoryItem{{ID: 1, Content: "x"}}}
-	engine := NewEngine(nil, store, nil, nil)
-	if done, err := engine.BackfillEmbeddings(context.Background()); done != 0 || err != nil {
-		t.Fatalf("BackfillEmbeddings(no embedder) = %d/%v", done, err)
-	}
-	if len(store.embeddings) != 0 {
-		t.Fatalf("embeddings = %+v", store.embeddings)
-	}
-}
-
-func TestBackfillEmbeddingsErrors(t *testing.T) {
-	tests := []struct {
-		name     string
-		embedder *fakeEmbedder
-	}{
-		{"embed 失败", &fakeEmbedder{err: errors.New("boom")}},
-		{"数量不匹配", &fakeEmbedder{vecs: [][]float32{{1}}}},
-	}
-	for _, tt := range tests {
-		store := &fakeStore{pending: []port.MemoryItem{{ID: 1, Content: "a"}, {ID: 2, Content: "b"}}}
-		engine := NewEngine(nil, store, nil, nil).WithEmbedder(tt.embedder)
-		if _, err := engine.BackfillEmbeddings(context.Background()); err == nil {
-			t.Fatalf("%s: BackfillEmbeddings() error = nil", tt.name)
-		}
-		if len(store.embeddings) != 0 {
-			t.Fatalf("%s: 失败仍写向量: %+v", tt.name, store.embeddings)
-		}
-	}
-}
-
-func TestReviewOnceBackfills(t *testing.T) {
-	store := &fakeStore{pending: []port.MemoryItem{{ID: 3, Content: "c"}}}
-	engine := NewEngine(nil, store, nil, nil).WithEmbedder(&fakeEmbedder{vecs: [][]float32{{1}}})
-	if _, err := engine.ReviewOnce(context.Background()); err != nil {
-		t.Fatalf("ReviewOnce() error = %v", err)
-	}
-	if len(store.embeddings) != 1 {
-		t.Fatalf("ReviewOnce 未回填向量: %+v", store.embeddings)
 	}
 }
 

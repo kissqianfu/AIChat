@@ -158,7 +158,7 @@ func validateHours(c *HoursConfig, add func(string, ...any)) {
 }
 
 // validateModels 校验模型槽位：chat.fast 必填（base_url/model 非空）；
-// 其余对话槽位填了就要完整；能力槽位（embed/asr/tts/imagegen）允许 base_url 空 = 关闭。
+// 其余对话槽位填了就要完整；能力槽位（asr/tts/imagegen）允许 base_url 空 = 关闭。
 func validateModels(m *ModelsConfig, add func(string, ...any)) {
 	checkChat := func(name string, s ModelSlot) {
 		if s.Primary.Model == "" {

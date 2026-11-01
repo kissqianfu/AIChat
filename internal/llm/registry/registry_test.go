@@ -117,18 +117,18 @@ func TestLoadValidationErrors(t *testing.T) {
 }
 
 func TestCapabilitySlotEmptyBaseURLAllowed(t *testing.T) {
-	// embed/asr/tts/imagegen 的 base_url 为空 = 该能力关闭，注册表照常加载。
+	// asr/tts/imagegen 的 base_url 为空 = 该能力关闭，注册表照常加载。
 	path := writeTemp(t, `
 models:
   chat: {fast: {primary: {base_url: x, model: m}}}
-  embed: {primary: {base_url: "", model: emb}}
+  asr: {primary: {base_url: "", model: asr-1}}
 `)
 	r, err := Load(path, Options{Key: testKey})
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if ref, ok := r.SlotModel("embed"); !ok || ref.BaseURL != "" {
-		t.Fatalf("embed 槽位 = %+v/%v", ref, ok)
+	if ref, ok := r.SlotModel("asr"); !ok || ref.BaseURL != "" {
+		t.Fatalf("asr 槽位 = %+v/%v", ref, ok)
 	}
 }
 

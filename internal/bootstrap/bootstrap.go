@@ -139,7 +139,6 @@ type wiring struct {
 	appSecret string
 
 	reg         *registry.Registry
-	embedModel  string
 	asrModel    string
 	imageModel  string
 	imageSize   string
@@ -165,7 +164,6 @@ type wiring struct {
 	relEngine     *memory.RelationshipEngine
 	statsObs      *stats.Observer // 群成员/互动统计（docs/01 §2.6），nil = 未初始化
 	replyCache    cache.ReplyCache
-	embedOne      func(context.Context, string) ([]float32, error)
 
 	budget     *orchestrator.Budget
 	schedStore *repo.ScheduleStore

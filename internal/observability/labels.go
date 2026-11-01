@@ -48,14 +48,6 @@ const (
 	TokenCached     TokenKind = "cached"     // 输入中命中缓存的部分（单价约为未命中的 2%）
 )
 
-// CacheKind 是回复缓存类型（aichat_reply_cache_* 的 kind label）。
-type CacheKind string
-
-const (
-	CacheExact    CacheKind = "exact"
-	CacheSemantic CacheKind = "semantic"
-)
-
 // ProactiveKind 是主动消息来源（aichat_proactive_sent_total 的 kind label）。
 type ProactiveKind string
 

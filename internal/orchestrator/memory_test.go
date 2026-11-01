@@ -59,48 +59,9 @@ func TestRepliesInjectsMemoryAndTouches(t *testing.T) {
 	}
 }
 
-func TestRecallUsesQueryVector(t *testing.T) {
-	memory := &fakeMemory{}
-	model := &fakeModel{resp: &port.ChatResponse{Content: "那就别养猫"}}
-	var embedded string
-	o, err := New(Config{Model: model, Persona: "p", Memory: memory, Embed: func(_ context.Context, text string) ([]float32, error) {
-		embedded = text
-		return []float32{0.1, 0.2}, nil
-	}})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	ev := messageEvent()
-	ev.Parts = []port.Part{{Kind: port.PartText, Text: "猫毛过敏怎么办"}}
-	if _, err := o.Replies(context.Background(), ev); err != nil {
-		t.Fatalf("Replies() error = %v", err)
-	}
-	if embedded != "猫毛过敏怎么办" {
-		t.Fatalf("embedded text = %q", embedded)
-	}
-	if len(memory.lastQuery.Vec) != 2 || memory.lastQuery.Vec[0] != 0.1 {
-		t.Fatalf("RecallQuery.Vec = %v", memory.lastQuery.Vec)
-	}
-}
-
-func TestRecallEmbedErrorFallsBack(t *testing.T) {
-	memory := &fakeMemory{}
-	model := &fakeModel{resp: &port.ChatResponse{Content: "好的"}}
-	o, err := New(Config{Model: model, Persona: "p", Memory: memory, Embed: func(context.Context, string) ([]float32, error) {
-		return nil, errors.New("embed down")
-	}})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	ev := messageEvent()
-	ev.Parts = []port.Part{{Kind: port.PartText, Text: "猫毛过敏怎么办"}}
-	if _, err := o.Replies(context.Background(), ev); err != nil {
-		t.Fatalf("Replies() error = %v", err)
-	}
-	if len(memory.lastQuery.Vec) != 0 {
-		t.Fatalf("失败后仍带向量: %v", memory.lastQuery.Vec)
-	}
-}
+// 2026-11-01 删除 embed：原 TestRecallUsesQueryVector / TestRecallEmbedErrorFallsBack
+// 随向量召回一起移除。召回请求不再携带向量，恒定走 bigram 粗筛 + 词面精排，
+// 由 TestMemoryRecallInjected 覆盖"召回结果被注入"这条主路径。
 
 func TestRememberCommand(t *testing.T) {
 	memory := &fakeMemory{}

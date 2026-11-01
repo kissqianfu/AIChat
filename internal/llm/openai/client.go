@@ -1,4 +1,6 @@
-// Package openai 是 OpenAI 兼容的媒体/向量 provider（embedding/ASR/TTS/图像生成）。
+// Package openai 是 OpenAI 兼容的媒体 provider（ASR/TTS/图像生成）。
+//
+// 2026-11-01 删除 embedding：语义缓存与记忆向量回填都已移除，本客户端只管媒体。
 //
 // 只依赖 base_url + api_key：换供应商（OpenAI、硅基流动、中转）只改配置。
 package openai
@@ -80,35 +82,6 @@ func (c *Client) do(ctx context.Context, path string, body any) ([]byte, error) 
 		return nil, fmt.Errorf("openai: HTTP %d: %s", resp.StatusCode, truncate(string(data), 200))
 	}
 	return data, nil
-}
-
-// Embed 生成文本向量（/embeddings）。
-func (c *Client) Embed(ctx context.Context, model string, texts []string) ([][]float32, error) {
-	raw, err := c.do(ctx, "/embeddings", map[string]any{"model": model, "input": texts})
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		Data []struct {
-			Embedding []float32 `json:"embedding"`
-			Index     int       `json:"index"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, fmt.Errorf("openai: decode embeddings: %w", err)
-	}
-	out := make([][]float32, len(texts))
-	for _, item := range resp.Data {
-		if item.Index >= 0 && item.Index < len(out) {
-			out[item.Index] = item.Embedding
-		}
-	}
-	for i, vec := range out {
-		if len(vec) == 0 {
-			return nil, fmt.Errorf("openai: embeddings[%d] 为空", i)
-		}
-	}
-	return out, nil
 }
 
 // Transcribe 语音转文字（/audio/transcriptions，multipart）。

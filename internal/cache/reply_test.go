@@ -25,30 +25,17 @@ func TestExactReplyCache(t *testing.T) {
 	}
 }
 
-func TestSemanticCacheParaphrase(t *testing.T) {
-	c := NewSemantic(clock.NewFrozen(time.Unix(1700000000, 0)), 0.45)
-	ctx := context.Background()
-	ev := port.Event{Scene: port.SceneGroup, TargetID: "g1"}
-	c.Store(ctx, ev, "今天天气怎么样", "今天晴，适合出门")
-	if reply, ok := c.Lookup(ctx, ev, "今天天气如何"); !ok || reply == "" {
-		t.Fatalf("paraphrase miss: %q/%v", reply, ok)
-	}
-	if _, ok := c.Lookup(ctx, ev, "量子力学的薛定谔方程"); ok {
-		t.Fatal("unrelated hit")
-	}
-	if _, ok := c.Lookup(ctx, port.Event{Scene: port.SceneGroup, TargetID: "g2"}, "今天天气如何"); ok {
-		t.Fatal("cross-scope hit")
-	}
-}
-
-func TestSemanticCacheExpiry(t *testing.T) {
+// 2026-11-01 删除语义缓存：原 TestSemanticCacheParaphrase / Expiry 随实现一起移除。
+// 剩下的精确缓存要求"规范化后完全一致"才命中——换个说法就该重新问模型，
+// 这正是当初语义缓存两个阈值都不合适的根因。
+func TestExactCacheTTL(t *testing.T) {
 	clk := clock.NewFrozen(time.Unix(1700000000, 0))
-	c := NewSemantic(clk, 0.6)
+	c := NewExact(clk, 8)
 	ctx := context.Background()
 	ev := port.Event{Scene: port.SceneC2C, TargetID: "u1"}
-	c.Store(ctx, ev, "我喜欢猫", "记住啦")
+	c.Store(ctx, ev, "在吗", "在")
 	clk.Advance(11 * time.Minute)
-	if _, ok := c.Lookup(ctx, ev, "我喜欢猫"); ok {
-		t.Fatal("expired semantic entry returned")
+	if _, ok := c.Lookup(ctx, ev, "在吗"); ok {
+		t.Fatal("过期条目仍命中")
 	}
 }

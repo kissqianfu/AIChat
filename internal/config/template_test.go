@@ -75,7 +75,7 @@ func TestTemplateCoversAllSections(t *testing.T) {
 		t.Fatalf("hours.windows 缺 work/night 示例：%+v", got.Hours.Windows)
 	}
 	// 灰度开关必须整组写全，漏写会被误读成"关掉"。
-	for _, k := range []string{"cache", "semantic_cache", "memory_extract", "tools", "followup", "interject"} {
+	for _, k := range []string{"cache", "memory_extract", "tools", "followup", "interject"} {
 		if _, ok := got.Features[k]; !ok {
 			t.Fatalf("features 缺 %q", k)
 		}

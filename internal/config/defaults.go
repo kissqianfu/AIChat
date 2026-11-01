@@ -6,7 +6,7 @@ import "time"
 func Default() Config {
 	return Config{
 		App:      AppConfig{LogLevel: "info", Timezone: "Asia/Shanghai"},
-		Features: map[string]bool{"cache": true, "semantic_cache": true, "memory_extract": true, "tools": true, "followup": true, "interject": false},
+		Features: map[string]bool{"cache": true, "memory_extract": true, "tools": true, "followup": true, "interject": false},
 		Bot: BotConfig{
 			Transport: "webhook",
 		},

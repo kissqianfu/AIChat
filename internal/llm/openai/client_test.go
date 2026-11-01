@@ -18,24 +18,6 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	return New(Config{BaseURL: srv.URL + "/v1", APIKey: func(context.Context) (string, error) { return "sk-test", nil }})
 }
 
-func TestEmbed(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/embeddings" || r.Header.Get("Authorization") != "Bearer sk-test" {
-			t.Errorf("path/auth = %q/%q", r.URL.Path, r.Header.Get("Authorization"))
-		}
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body["model"] != "embed-1" {
-			t.Errorf("model = %v", body["model"])
-		}
-		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[0.1,0.2]}]}`))
-	})
-	vecs, err := c.Embed(context.Background(), "embed-1", []string{"你好"})
-	if err != nil || len(vecs) != 1 || len(vecs[0]) != 2 {
-		t.Fatalf("Embed() = %+v/%v", vecs, err)
-	}
-}
-
 func TestTranscribe(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/audio/transcriptions" {
@@ -87,9 +69,6 @@ func TestErrors(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "boom", http.StatusBadRequest)
 	})
-	if _, err := c.Embed(context.Background(), "m", []string{"x"}); err == nil {
-		t.Fatal("Embed(400) error = nil")
-	}
 	if _, err := c.Transcribe(context.Background(), "m", []byte("a"), "a.mp3", "audio/mpeg"); err == nil {
 		t.Fatal("Transcribe(400) error = nil")
 	}

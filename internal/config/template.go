@@ -89,7 +89,7 @@ imagegen:
 
 
 # 模型槽位：每个引用自带 base_url 与 api_key_name（→ api_key 表）。
-# 能力槽位（vision/embed/asr/tts/imagegen）的 base_url 留空 = 该能力关闭。
+# 能力槽位（vision/asr/tts/imagegen）的 base_url 留空 = 该能力关闭。
 models:
   chat:
     # 日常闲聊，默认槽位（必填）
@@ -101,9 +101,6 @@ models:
   # 图像理解：不用时整段删除（写了就必须给 base_url/model，不支持留空关闭）
   vision:
     primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
-  # 语义缓存向量：base_url 留空 = 关闭
-  embed:
-    primary: { base_url: "", model: text-embedding-3-small, api_key_name: openai }
   # 语音识别：base_url 留空 = 关闭；protocol: openai（默认）| qianwen
   asr:
     primary: { base_url: https://maas.qianwenaiapi.com/compatible-mode/v1, model: qwen3-asr-flash, api_key_name: asr, protocol: qianwen }
@@ -121,7 +118,6 @@ models:
 # 功能灰度（未列出的项按代码默认；这里是生产在用的组合）
 features:
   cache: true                      # 回复缓存
-  semantic_cache: true             # 语义缓存（需 embed 槽位可用）
   memory_extract: true             # 被动记忆抽取
   tools: true                      # 工具调用
   followup: true                   # 追问引导

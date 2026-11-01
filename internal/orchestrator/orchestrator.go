@@ -73,8 +73,7 @@ type Config struct {
 	Proactive         func(ctx context.Context, ev port.Event) (bool, error)            // nil = 不转主动
 	ToolContext       func(ctx context.Context, ev port.Event) context.Context          // nil = 原 ctx
 	CallLog           func(ctx context.Context, ev port.Event, prompt, completion int, finish string)
-	Embed             func(ctx context.Context, text string) ([]float32, error) // nil = 不走向量召回
-	Sticker           StickerCollector                                          // nil = 不收集表情包
+	Sticker           StickerCollector // nil = 不收集表情包
 	Clock             clock.Clock
 }
 

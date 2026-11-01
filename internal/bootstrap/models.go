@@ -35,9 +35,6 @@ func (w *wiring) buildModels(ctx context.Context) error {
 	// models 段热加载（docs/08 §2.6）：config.yaml 变更 1s 内检测，失败保留旧版并保留快照。
 	w.watchModels(ctx)
 
-	if ref, ok := reg.SlotModel("embed"); ok {
-		w.embedModel = ref.Model
-	}
 	if ref, ok := reg.SlotModel("asr"); ok {
 		w.asrModel = ref.Model
 	}

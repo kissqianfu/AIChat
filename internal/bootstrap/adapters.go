@@ -3,7 +3,6 @@ package bootstrap
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -25,7 +24,7 @@ type guardAdapter struct {
 	guard *limits.Guard
 }
 
-// openAIForSlot 为 OpenAI 兼容能力槽位（embed/asr/imagegen）构造客户端；
+// openAIForSlot 为 OpenAI 兼容能力槽位（asr/imagegen）构造客户端；
 // 槽位缺失或 base_url 为空（该能力关闭）返回 nil。
 func openAIForSlot(reg *registry.Registry, keys keyGetter, slot string) *openai.Client {
 	if reg == nil || keys == nil {
@@ -82,43 +81,6 @@ func asrProtocolOf(reg *registry.Registry) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(ref.Protocol))
-}
-
-// memoryEmbedder 把 OpenAI 兼容 embedding 接成 memory.Embedder（M7-6 向量回填用）。
-type memoryEmbedder struct {
-	client *openai.Client
-	model  string
-}
-
-// Embed 实现 memory.Embedder（批量）。
-func (a *memoryEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	return a.client.Embed(ctx, a.model, texts)
-}
-
-// embedderFor 只有配置了 provider + embed 槽位才启用记忆向量回填。
-func embedderFor(provider *openai.Client, model string) *memoryEmbedder {
-	if provider == nil || model == "" {
-		return nil
-	}
-	return &memoryEmbedder{client: provider, model: model}
-}
-
-// queryEmbedder 是单条文本向量化（记忆召回 query 与语义缓存共用）；未配置时返回 nil。
-// 返回 nil 时调用方自动回退 bigram/本地向量。
-func queryEmbedder(provider *openai.Client, model string) func(context.Context, string) ([]float32, error) {
-	if provider == nil || model == "" {
-		return nil
-	}
-	return func(ctx context.Context, text string) ([]float32, error) {
-		vecs, err := provider.Embed(ctx, model, []string{text})
-		if err != nil {
-			return nil, err
-		}
-		if len(vecs) == 0 || len(vecs[0]) == 0 {
-			return nil, errors.New("bootstrap: embedding 返回空向量")
-		}
-		return vecs[0], nil
-	}
 }
 
 // auditWriter 写审计日志（repo.AdminRepo 实现；测试可替换）。

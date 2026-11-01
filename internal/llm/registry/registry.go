@@ -115,7 +115,7 @@ func validateModels(m config.ModelsConfig) (map[string]Slot, error) {
 		slots["chat."+name] = slot
 	}
 	for name, slot := range map[string]*Slot{
-		"vision": m.Vision, "embed": m.Embed, "asr": m.Asr,
+		"vision": m.Vision, "asr": m.Asr,
 		"tts": m.TTS, "imagegen": m.ImageGen, "search": m.Search,
 	} {
 		if slot != nil {
@@ -141,7 +141,7 @@ func validateModels(m config.ModelsConfig) (map[string]Slot, error) {
 			if name != "search" && strings.TrimSpace(ref.Model) == "" {
 				return nil, fmt.Errorf("registry: 槽位 %q 有空 model 名", name)
 			}
-			// 对话/视觉槽位必须给 base_url；能力槽位（embed/asr/tts/imagegen/search）空 base_url = 关闭/默认。
+			// 对话/视觉槽位必须给 base_url；能力槽位（asr/tts/imagegen/search）空 base_url = 关闭/默认。
 			if strings.TrimSpace(ref.BaseURL) == "" && (strings.HasPrefix(name, "chat.") || name == "vision") {
 				return nil, fmt.Errorf("registry: 槽位 %q 的 base_url 不能为空", name)
 			}

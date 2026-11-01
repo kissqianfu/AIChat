@@ -83,7 +83,7 @@ imagegen:
 # 模型槽位（2026-10-31 由 models.yaml 并入，docs/08 §2.5）：
 # 每个引用自带 base_url 与 api_key_name（→ api_key 表的 name），不再有 providers 中转。
 # 能力槽位可选 protocol：asr = openai（默认）/ qianwen；tts = elevenlabs（默认）/ breeze（mp3 直传免 silk）。
-# 对话/视觉槽位走 OpenAI 兼容协议；embed/asr/imagegen/tts 的 base_url 留空 = 该能力关闭。${ENV} 会展开。
+# 对话/视觉槽位走 OpenAI 兼容协议；asr/imagegen/tts 的 base_url 留空 = 该能力关闭。${ENV} 会展开。
 # 热加载：改本段后 1s 内生效（失败保留旧版），/reload 也可手动触发（保留 5 层快照可回滚）。
 models:
   # 对话槽位（复杂度判别与插话打分也用 chat.fast）
@@ -100,9 +100,6 @@ models:
     primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
 
   
-  # embed 向量化
-  embed:
-    primary: { base_url: "", model: text-embedding-3-small, api_key_name: openai }
   # 语音识别 base_url 留空 = 该能力关闭
   asr:
     primary: { base_url: "", model: whisper-1, api_key_name: openai }
@@ -123,5 +120,4 @@ features:
   cache: true            # 模型回复短期缓存（M4-5）
   memory_extract: true   # 异步记忆抽取（M2-2）
   tools: true            # 工具调用（M1-9）
-  semantic_cache: true   # 向量语义缓存（本地 bigram 向量；M5 可换 embedding 模型）
   followup: true         # 补一句（P1 拟人化）：回复后 45-150s 经四重刹车再判断是否补一句
