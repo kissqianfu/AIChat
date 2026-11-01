@@ -78,6 +78,20 @@ var (
 		Name: "aichat_interject_skip_total",
 		Help: "模型 [SKIP] 自决沉默次数",
 	})
+	// DeepSeek 账户余额（2026-11-01）：查官方 GET /user/balance，是真实扣费结果，
+	// 不依赖单价表。看板看两个东西——还剩多少、以及曲线下降的斜率（≈ 消耗速度）。
+	deepseekBalance = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "aichat_deepseek_balance",
+		Help: "DeepSeek 账户余额（kind: total=总可用 / granted=赠金 / topped_up=充值；随币种）",
+	}, []string{"currency", "kind"})
+	deepseekAvailable = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "aichat_deepseek_balance_available",
+		Help: "DeepSeek 账户是否还有余额可调用（1=可用，0=余额不足）",
+	})
+	deepseekBalanceErrors = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "aichat_deepseek_balance_errors_total",
+		Help: "余额查询失败数（鉴权/网络/接口变更；看板余额断更先看这里）",
+	})
 	queueDepth = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "aichat_queue_depth",
 		Help: "事件管道队列深度",
@@ -173,6 +187,31 @@ func ObserveMediaCall(slot LLMSlot, start time.Time, err error) {
 
 // CountInterjectSkip 计数模型 [SKIP] 自决沉默。
 func CountInterjectSkip() { interjectSkipTotal.Inc() }
+
+// SetBalance 记录某币种的账户余额（一次写 total / granted / topped_up 三条）。
+//
+// 余额是官方返回值，不做任何推算：它只随真实扣费变化，所以看板上曲线的斜率
+// 就是消耗速度——这比在进程内按单价算花费可靠得多（不需要维护价格表）。
+func SetBalance(currency string, total, granted, toppedUp float64) {
+	if currency == "" {
+		currency = "unknown"
+	}
+	deepseekBalance.WithLabelValues(currency, "total").Set(total)
+	deepseekBalance.WithLabelValues(currency, "granted").Set(granted)
+	deepseekBalance.WithLabelValues(currency, "topped_up").Set(toppedUp)
+}
+
+// SetBalanceAvailable 记录账户当前是否还有余额可调用。
+func SetBalanceAvailable(ok bool) {
+	if ok {
+		deepseekAvailable.Set(1)
+		return
+	}
+	deepseekAvailable.Set(0)
+}
+
+// CountBalanceError 计数余额查询失败。
+func CountBalanceError() { deepseekBalanceErrors.Inc() }
 
 // SetQueueDepth 设置事件队列深度。
 func SetQueueDepth(n int) { queueDepth.Set(float64(n)) }

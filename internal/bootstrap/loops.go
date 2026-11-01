@@ -1,16 +1,105 @@
-// loops.go：后台循环——提醒扫描、每日任务、周期任务骨架。
+// loops.go：后台循环——提醒扫描、每日任务、账户余额、周期任务骨架。
 package bootstrap
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/llm/deepseek"
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
+	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 	"github.com/kissqianfu/aichat/internal/port"
 	"github.com/kissqianfu/aichat/internal/schedule"
 )
+
+// balanceDefaultInterval 是未配置 interval_minutes 时的查询间隔。
+// 余额不会因为一分钟的延迟而失真，查勤了只是白打请求。
+const balanceDefaultInterval = 10 * time.Minute
+
+// startBalanceLoop 定时查 DeepSeek 账户余额（2026-11-01）。
+//
+// 为什么是余额而不是自算花费：余额是官方扣费结果，不需要维护单价表，也不会因为
+// 调价、峰谷窗口、单位换算出错——那三件事已经让看板说过两次假话。
+//
+// 端点与密钥默认跟随 models.chat.fast（一般就是同一个账户）；失败只计数与告警，
+// 不影响任何业务链路，也不重试（下一轮自然再查）。
+func (w *wiring) startBalanceLoop(ctx context.Context) {
+	cfg := w.cfg.Balance
+	if !cfg.Enabled {
+		return
+	}
+	baseURL, keyName := cfg.BaseURL, cfg.APIKeyName
+	if ref, ok := w.cfg.Models.Chat["fast"]; ok {
+		if baseURL == "" {
+			baseURL = ref.Primary.BaseURL
+		}
+		if keyName == "" {
+			keyName = ref.Primary.APIKeyName
+		}
+	}
+	if keyName == "" {
+		w.logger.Warn("余额查询已开启，但既没配 balance.api_key_name 也没有 chat.fast 主引用，跳过")
+		return
+	}
+	if baseURL == "" {
+		baseURL = deepseek.DefaultBaseURL
+	}
+	interval := time.Duration(cfg.IntervalMinutes) * time.Minute
+	if interval <= 0 {
+		interval = balanceDefaultInterval
+	}
+	client := httpclient.New(15 * time.Second)
+
+	fetch := func(runCtx context.Context) error {
+		key, err := w.keyRepo.Key(runCtx, keyName)
+		if err != nil {
+			observability.CountBalanceError()
+			return fmt.Errorf("余额查询取密钥 %q: %w", keyName, err)
+		}
+		b, err := deepseek.FetchBalance(runCtx, client, baseURL, key)
+		if err != nil {
+			observability.CountBalanceError()
+			return err
+		}
+		observability.SetBalanceAvailable(b.IsAvailable)
+		if len(b.BalanceInfos) == 0 {
+			observability.CountBalanceError()
+			return fmt.Errorf("余额响应没有 balance_infos（接口口径变化？）")
+		}
+		for _, info := range b.BalanceInfos {
+			total, err := info.Amount("total")
+			if err != nil {
+				observability.CountBalanceError()
+				return err
+			}
+			granted, err := info.Amount("granted")
+			if err != nil {
+				observability.CountBalanceError()
+				return err
+			}
+			toppedUp, err := info.Amount("topped_up")
+			if err != nil {
+				observability.CountBalanceError()
+				return err
+			}
+			observability.SetBalance(info.Currency, total, granted, toppedUp)
+			w.logger.Info("账户余额已更新", "currency", info.Currency, "total", total,
+				"granted", granted, "topped_up", toppedUp, "available", b.IsAvailable)
+		}
+		return nil
+	}
+
+	// 启动即查一次，否则头 interval 分钟内看板是空的。
+	go func() {
+		if err := fetch(ctx); err != nil {
+			w.logger.Warn("余额查询失败", "err", err)
+		}
+	}()
+	startEvery(ctx, interval, w.logger, fetch)
+}
 
 // startReminderLoop 提醒到点发送（M7-4b）：走主动消息配额；发送成功才标记，失败下轮重试（超 24h 丢弃）。
 func (w *wiring) startReminderLoop(ctx context.Context) {

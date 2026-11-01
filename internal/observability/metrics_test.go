@@ -234,3 +234,34 @@ func TestStreamUsageTapRecordsTokens(t *testing.T) {
 		t.Fatalf("cached tokens 增量 = %v, want 800", got)
 	}
 }
+
+// TestSetBalance 锁住余额打点：一次写三条 gauge，可用位是 0/1，失败单独计数。
+// 余额是官方返回值（绝对值覆盖），所以这里断言绝对值而不是增量。
+func TestSetBalance(t *testing.T) {
+	SetBalance("CNY", 110.5, 10, 100.5)
+	if got := testutil.ToFloat64(deepseekBalance.WithLabelValues("CNY", "total")); got != 110.5 {
+		t.Fatalf("balance{CNY,total} = %v, want 110.5", got)
+	}
+	if got := testutil.ToFloat64(deepseekBalance.WithLabelValues("CNY", "granted")); got != 10 {
+		t.Fatalf("balance{CNY,granted} = %v, want 10", got)
+	}
+	if got := testutil.ToFloat64(deepseekBalance.WithLabelValues("CNY", "topped_up")); got != 100.5 {
+		t.Fatalf("balance{CNY,topped_up} = %v, want 100.5", got)
+	}
+
+	SetBalanceAvailable(true)
+	if got := testutil.ToFloat64(deepseekAvailable); got != 1 {
+		t.Fatalf("available = %v, want 1", got)
+	}
+	SetBalanceAvailable(false)
+	if got := testutil.ToFloat64(deepseekAvailable); got != 0 {
+		t.Fatalf("available = %v, want 0", got)
+	}
+
+	before := testutil.ToFloat64(deepseekBalanceErrors)
+	CountBalanceError()
+	CountBalanceError()
+	if got := testutil.ToFloat64(deepseekBalanceErrors) - before; got != 2 {
+		t.Fatalf("balance_errors 增量 = %v, want 2", got)
+	}
+}

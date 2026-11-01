@@ -41,5 +41,8 @@ func Default() Config {
 		ImageGen: ImageGenConfig{
 			Enabled: false, MaxPerDay: 10, // docs/08 §4.4：默认关，按群开启，每日 10 张
 		},
+		// 余额查询默认关：它要多打一个 /user/balance 请求，且在非 DeepSeek 端点上
+		// 只会 404 刷日志。要用就在配置里显式打开。
+		Balance: BalanceConfig{Enabled: false, IntervalMinutes: 10},
 	}
 }

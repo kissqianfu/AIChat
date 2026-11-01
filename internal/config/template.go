@@ -87,6 +87,14 @@ imagegen:
   enabled: false                   # 默认关
   max_per_day: 10                  # 每人/每群每天上限
 
+# DeepSeek 账户余额（GET /user/balance）：只读展示，看板显示"还剩多少钱"，
+# 以及余额曲线下降的斜率＝真实消耗速度。不维护单价表，所以不会算错。
+balance:
+  enabled: true                    # 关掉就不发这个请求
+  interval_minutes: 10             # 每 N 分钟查一次（下限 1）
+  base_url: ""                     # 留空 = 跟随 models.chat.fast
+  api_key_name: ""                 # 留空 = 跟随 models.chat.fast
+
 
 # 模型槽位：每个引用自带 base_url 与 api_key_name（→ api_key 表）。
 # 能力槽位（vision/asr/tts/imagegen）的 base_url 留空 = 该能力关闭。

@@ -25,6 +25,7 @@ type Config struct {
 	Hours    HoursConfig     `yaml:"hours"`
 	Sticker  StickerConfig   `yaml:"sticker"`
 	ImageGen ImageGenConfig  `yaml:"imagegen"`
+	Balance  BalanceConfig   `yaml:"balance"`
 
 	// SourcePath 是配置文件来源路径（Load 填写；LoadBytes 为空）。
 	// registry 热加载监听同一个文件，只取 models 段。
@@ -165,6 +166,21 @@ type StickerConfig struct {
 type ImageGenConfig struct {
 	Enabled   bool `yaml:"enabled"`
 	MaxPerDay int  `yaml:"max_per_day"` // 每群/每人每天上限
+}
+
+// BalanceConfig 是 DeepSeek 账户余额查询（GET /user/balance，2026-11-01）。
+//
+// 只读展示：每 interval_minutes 拉一次余额，暴露成 gauge 供看板看"还剩多少钱"、
+// 以及余额的下降斜率（≈ 真实消耗速度）。它替代不了官方账单，但**不需要维护单价表**，
+// 所以不会因为调价或单位换算说假话——这是它比自算费用更可靠的地方。
+//
+// BaseURL / APIKeyName 留空 = 跟随 models.chat.fast 的主引用（一般就是同一个账户）；
+// 填了则用指定值。只看 chat.fast 而不管回退链：余额是账户级的，没有槽位概念。
+type BalanceConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	BaseURL         string `yaml:"base_url"`
+	APIKeyName      string `yaml:"api_key_name"`
+	IntervalMinutes int    `yaml:"interval_minutes"` // 0 = 10 分钟；下限 1
 }
 
 // Default 返回带全套默认值的配置；调用方应在 Unmarshal 之前先用它。

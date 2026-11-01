@@ -108,16 +108,11 @@ func Run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	}
 	handle := w.wireAdmin(ctx, orch)
 	w.startReminderLoop(ctx)
+	w.startBalanceLoop(ctx)
 	media.StartCleanup(ctx, "data/media", w.clk, 24*time.Hour)
 
 	return w.runTransport(ctx, handle)
 }
-
-// wiring 是 Run 的装配上下文：环境、存储、接入与各阶段产物。
-// 各 open/build 方法按依赖顺序填充字段；Run 只编排不持有细节。
-
-// wiring 是 Run 的装配上下文：环境、存储、接入与各阶段产物。
-// 各 open/build 方法按依赖顺序填充字段；Run 只编排不持有细节。
 
 // wiring 是 Run 的装配上下文：环境、存储、接入与各阶段产物。
 // 各 open/build 方法按依赖顺序填充字段；Run 只编排不持有细节。

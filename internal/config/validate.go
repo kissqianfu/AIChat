@@ -23,6 +23,7 @@ func (c *Config) Validate() error {
 	validateModels(&c.Models, add)
 	validateSticker(&c.Sticker, add)
 	validateImageGen(&c.ImageGen, add)
+	validateBalance(&c.Balance, add)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config: %d 处配置不合法:\n- %s", len(errs), strings.Join(errs, "\n- "))
@@ -200,6 +201,20 @@ func validateSticker(c *StickerConfig, add func(string, ...any)) {
 func validateImageGen(c *ImageGenConfig, add func(string, ...any)) {
 	if c.MaxPerDay <= 0 || c.MaxPerDay > 100 {
 		add("imagegen.max_per_day 必须在 (0, 100]，当前 %d", c.MaxPerDay)
+	}
+}
+
+// validateBalance 校验余额查询：关着就完全不看，开着才要求间隔合理。
+// base_url/api_key_name 留空是合法的（跟随 models.chat.fast），所以这里不校验它们。
+func validateBalance(c *BalanceConfig, add func(string, ...any)) {
+	if !c.Enabled {
+		return
+	}
+	if c.IntervalMinutes < 0 || c.IntervalMinutes > 24*60 {
+		add("balance.interval_minutes 必须在 [0, 1440]，当前 %d（0 = 用默认 10 分钟）", c.IntervalMinutes)
+	}
+	if c.BaseURL != "" && !strings.HasPrefix(c.BaseURL, "http://") && !strings.HasPrefix(c.BaseURL, "https://") {
+		add("balance.base_url 必须以 http:// 或 https:// 开头，当前 %q", c.BaseURL)
 	}
 }
 
