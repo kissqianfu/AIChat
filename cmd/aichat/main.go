@@ -19,6 +19,13 @@ import (
 	"github.com/kissqianfu/aichat/internal/observability"
 )
 
+// version 由构建时注入：go build -ldflags "-X main.version=<sha>"。
+// 未注入时是 dev（本地 go run / go build 都落在这里）。
+//
+// 它唯一的用途是让线上日志能回答"现在跑的是哪个提交"——出问题时先看这一行，
+// 不用再去比对二进制里的某个新字符串。
+var version = "dev"
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
 	flag.Parse()
@@ -58,6 +65,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
+	// 版本先打，后面所有日志才能确定自己属于哪个构建。
+	logger.Info("版本已加载", "version", version)
 
 	// PID（2026-10-31）：配置 app.pid_file 时启动写入、正常退出删除（systemd Type=simple 的
 	// 运维锚点：重启脚本/监控按 pid 文件定位进程，不必解析 ps）。

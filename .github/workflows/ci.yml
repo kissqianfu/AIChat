@@ -1,26 +1,27 @@
 name: ci
 
-# 质量门分两层（2026-11-02 调整）：
+# 流水线分三段（2026-11-02 重建）：
 #
-#   CI（本文件）：通用语义检查——编译、go vet、竞态测试、两个目标的交叉编译。
-#     这些都是 Go 生态的标准命令，写死在 yml 里不会漂移，也不需要任何参数调优。
+#   build-check  通用语义检查：编译 / go vet / 两个目标交叉编译 / 竞态测试。
+#                全是 Go 生态标准命令，写死在 yml 里不会漂移。
+#   build        交叉编译 linux/amd64，注入提交号，产出 artifact。
+#   deploy       二进制走 stdin 交给服务器 /opt/aichat/deploy.sh，脚本自己
+#                备份 → 安装 → 重启 → 自检 30s → 失败装回旧二进制。
 #
-#   本地 scripts/check.sh（不入库）：项目策略——dupl 重复度、gosec 与
-#     govulncheck、覆盖率门槛（platform/render/schedule 各 90%）。这些数字
-#     随容忍度调整，属于"人看一眼再决定"的东西，留在本地更合适；塞进 CI
-#     会导致改一次阈值就要动 workflow。
+# 质量门分两层，这里要说清：dupl 重复度、gosec/govulncheck、覆盖率门槛
+# 留在本地 scripts/check.sh（不入库）。因此 CI 绿只代表"能编译、能过测试"，
+# 那三项需要 push 前自己跑一次。如果哪天想让它们也拦住部署，再回来加。
 #
-# 必须清楚的一点：CI 绿只代表"能编译、能过测试"，不代表能上线。
-# 重复度、安全扫描、覆盖率这三项要靠 push 前手动跑一次 bash scripts/check.sh。
-#
-# 注意：push 与 pull_request 暂不触发（2026-11-02 摘掉），要在 Actions 页面点
-# "Run workflow" 手动跑。要恢复自动触发，把 push / pull_request 加回 on: 段。
+# 部署开关是仓库变量 DEPLOY_ENABLED=true；删掉它即停止自动部署，不用改代码。
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,7 +42,6 @@ jobs:
 
       # 两个交叉编译都必须 CGO_ENABLED=0：CGO=1 时用的是宿主 gcc，
       # 编不属于它的目标会挂在 runtime/cgo（grp.h: No such file）。
-      # 这也是之前 gates 常红的原因之一。
       - name: Cross-compile linux/amd64
         env:
           CGO_ENABLED: "0"
@@ -57,3 +57,113 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -race -count=1 ./...
+
+  build:
+    needs: build-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build linux/amd64 with version
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${GITHUB_SHA::7}"
+          GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o aichat-linux ./cmd/aichat
+          ls -lh aichat-linux
+          sha256sum aichat-linux | tee aichat-linux.sha256
+          # 记下这次构建用的两个仓库版本，排查"线上和本地不一致"时先看它
+          {
+            echo "aichat ${GITHUB_SHA}"
+            echo "qqsdk  $(GOWORK=off go list -m -f '{{.Version}}' github.com/kissqianfu/QQ-SDK)"
+            echo "built  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } | tee build-info.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aichat-linux
+          path: |
+            aichat-linux
+            aichat-linux.sha256
+            build-info.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    needs: build
+    # 仓库变量，不是 secret：删掉即停止自动部署。
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 连推两次不能让两个部署交叉安装。
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aichat-linux
+
+      # 深夜不部署：webhook 模式下进程重启那几秒的事件没有重投机制，
+      # 23:00-07:00 正是有人闲聊的时候。手动触发（workflow_dispatch）不受限。
+      - name: Check deploy window
+        id: window
+        run: |
+          h=$(TZ=Asia/Shanghai date +%H)
+          if [ "$h" -ge 7 ] && [ "$h" -lt 23 ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "当前 ${h} 点（北京时间），在部署窗口内"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::当前 ${h} 点（北京时间），夜间不部署；需要的话手动 Run workflow"
+          fi
+
+      # 密钥只在这一步落地到 runner 的临时文件，job 结束 runner 即销毁。
+      # authorized_keys 那边被 command= 锁死，这把钥匙干不了别的事。
+      - name: Prepare SSH
+        if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          for n in DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            eval "v=\${$n:-}"
+            if [ -z "$v" ]; then echo "::error::缺少 secret $n"; exit 1; fi
+          done
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null && echo "私钥可解析"
+
+      - name: Deploy
+        if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -eu
+          cat build-info.txt
+          # 远端命令参数会被 authorized_keys 的 command= 覆盖，随便写一个占位；
+          # 二进制走 stdin（scp/sftp 在这把钥匙上是关闭的）。
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -T "$DEPLOY_USER@$DEPLOY_HOST" deploy < aichat-linux
