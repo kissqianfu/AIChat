@@ -46,8 +46,6 @@ func (w *wiring) buildMemory(ctx context.Context) {
 }
 
 // startConsolidation 每日 03:00 记忆巩固（M7-6c）：R 重算归档/冷删除 + 情景过期清理。
-
-// startConsolidation 每日 03:00 记忆巩固（M7-6c）：R 重算归档/冷删除 + 情景过期清理。
 func (w *wiring) startConsolidation(ctx context.Context) {
 	daily, err := schedule.ParseDaily(w.cfg.Memory.ConsolidateCron, w.appLoc)
 	if err != nil {
@@ -96,8 +94,6 @@ func (w *wiring) moodKeyOf(ctx context.Context, ev port.Event) string {
 }
 
 // profileOf 群/私聊维度的用户画像注入。
-
-// profileOf 群/私聊维度的用户画像注入。
 func (w *wiring) profileOf() func(context.Context, port.Event) string {
 	return func(ctx context.Context, ev port.Event) string {
 		scope, owner := port.ScopeUser, ev.Author.ID
@@ -113,8 +109,6 @@ func (w *wiring) profileOf() func(context.Context, port.Event) string {
 }
 
 // relationshipOf 群内关系摘要（R4-3）。
-
-// relationshipOf 群内关系摘要（R4-3）。
 func (w *wiring) relationshipOf() func(context.Context, port.Event) (string, error) {
 	return func(ctx context.Context, ev port.Event) (string, error) {
 		if ev.Scene != port.SceneGroup {
@@ -123,8 +117,6 @@ func (w *wiring) relationshipOf() func(context.Context, port.Event) (string, err
 		return w.relEngine.Summary(ctx, ev.Scene, ev.TargetID, ev.Author.ID)
 	}
 }
-
-// groupStatsOf 群画像（docs/01 §2.6）：近 7 天活跃 top-3 + 与发言者互动最密 top-2。
 
 // groupStatsOf 群画像（docs/01 §2.6）：近 7 天活跃 top-3 + 与发言者互动最密 top-2。
 func (w *wiring) groupStatsOf() func(context.Context, port.Event) (string, error) {

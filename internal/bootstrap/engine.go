@@ -29,8 +29,6 @@ func (w *wiring) newReplyCache() cache.ReplyCache {
 }
 
 // buildToolbox 注册全部工具（docs/01 §4）；语音与看图按配置/槽位可选。
-
-// buildToolbox 注册全部工具（docs/01 §4）；语音与看图按配置/槽位可选。
 func (w *wiring) buildToolbox(ctx context.Context) error {
 	toolbox := tools.New()
 	w.toolbox = toolbox
@@ -139,8 +137,6 @@ func (w *wiring) buildGate() *orchestrator.Gate {
 }
 
 // policyResolver 把群事件映射到群级分时段判定（docs/09 §5.1）。
-
-// policyResolver 把群事件映射到群级分时段判定（docs/09 §5.1）。
 func (w *wiring) policyResolver() func(context.Context, port.Event) (schedule.Policy, error) {
 	return func(ctx context.Context, ev port.Event) (schedule.Policy, error) {
 		groupID := ""
@@ -152,15 +148,11 @@ func (w *wiring) policyResolver() func(context.Context, port.Event) (schedule.Po
 }
 
 // callLogger 记录一次 LLM 调用成本（价格常量见 llmCostMicros，M7-9/0014）。
-
-// callLogger 记录一次 LLM 调用成本（价格常量见 llmCostMicros，M7-9/0014）。
 func (w *wiring) callLogger() func(context.Context, port.Event, int, int, string) {
 	return func(ctx context.Context, ev port.Event, prompt, completion int, finish string) {
 		_ = w.logsRepo.InsertLLM(ctx, ev.ID, "chat", prompt, completion, finish, llmCostMicros(prompt, completion))
 	}
 }
-
-// toolContext 注入事件、RBAC 角色与当前占优情绪（sticker_pick 权重用，P3 拟人化）。
 
 // toolContext 注入事件、RBAC 角色与当前占优情绪（sticker_pick 权重用，P3 拟人化）。
 func (w *wiring) toolContext() func(context.Context, port.Event) context.Context {

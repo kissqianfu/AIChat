@@ -55,8 +55,6 @@ func (w *wiring) buildModels(ctx context.Context) error {
 }
 
 // watchModels 每 1s 检查 config.yaml 变更并热加载 models 段（失败保留旧版）。
-
-// watchModels 每 1s 检查 config.yaml 变更并热加载 models 段（失败保留旧版）。
 func (w *wiring) watchModels(ctx context.Context) {
 	path := w.cfg.SourcePath
 	reg := w.reg

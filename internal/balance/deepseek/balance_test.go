@@ -29,8 +29,9 @@ func TestFetchBalance(t *testing.T) {
 		_, _ = w.Write([]byte(balanceBody))
 	}))
 	defer srv.Close()
+	defer setBalanceURL(t, srv.URL)()
 
-	b, err := FetchBalance(context.Background(), srv.Client(), srv.URL, "sk-test")
+	b, err := FetchBalance(context.Background(), srv.Client(), "sk-test")
 	if err != nil {
 		t.Fatalf("FetchBalance() error = %v", err)
 	}
@@ -54,31 +55,15 @@ func TestFetchBalance(t *testing.T) {
 	}
 }
 
-// TestFetchBalanceStripsV1 chat 的 base_url 常写成 .../v1，而余额接口不在 /v1 下。
-func TestFetchBalanceStripsV1(t *testing.T) {
-	var gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		_, _ = w.Write([]byte(balanceBody))
-	}))
-	defer srv.Close()
-
-	if _, err := FetchBalance(context.Background(), srv.Client(), srv.URL+"/v1/", "sk-test"); err != nil {
-		t.Fatalf("FetchBalance() error = %v", err)
-	}
-	if gotPath != "/user/balance" {
-		t.Fatalf("请求路径 = %q, want /user/balance（/v1 应被剥掉）", gotPath)
-	}
-}
-
 func TestFetchBalanceErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":{"message":"Authentication Fails"}}`))
 	}))
 	defer srv.Close()
+	defer setBalanceURL(t, srv.URL)()
 
-	_, err := FetchBalance(context.Background(), srv.Client(), srv.URL, "bad-key")
+	_, err := FetchBalance(context.Background(), srv.Client(), "bad-key")
 	if err == nil {
 		t.Fatal("401 应返回错误")
 	}
@@ -86,10 +71,10 @@ func TestFetchBalanceErrors(t *testing.T) {
 		t.Fatalf("错误信息 = %q，应含状态码与响应体片段", got)
 	}
 
-	if _, err := FetchBalance(context.Background(), srv.Client(), srv.URL, ""); err == nil {
+	if _, err := FetchBalance(context.Background(), srv.Client(), ""); err == nil {
 		t.Fatal("空密钥应返回错误")
 	}
-	if _, err := FetchBalance(context.Background(), nil, srv.URL, "sk"); err == nil {
+	if _, err := FetchBalance(context.Background(), nil, "sk"); err == nil {
 		t.Fatal("nil http.Client 应返回错误")
 	}
 }
@@ -120,7 +105,8 @@ func TestFetchBalanceTimeout(t *testing.T) {
 	defer srv.Close()
 
 	client := &http.Client{Timeout: 30 * time.Millisecond}
-	if _, err := FetchBalance(context.Background(), client, srv.URL, "sk"); err == nil {
+	defer setBalanceURL(t, srv.URL)()
+	if _, err := FetchBalance(context.Background(), client, "sk"); err == nil {
 		t.Fatal("超时应返回错误")
 	}
 }
@@ -152,24 +138,12 @@ func containsAll(s string, subs ...string) bool {
 	return true
 }
 
-// balanceURL：余额不在 /v1 下（要剥），但 base_url 空着时不能拼出空 URL——
-// 线上踩过：配置改成 accounts 后 deepseek 那条 base_url 留空，
-// 结果请求打到 ""/user/balance，报 unsupported protocol scheme。
-func TestBalanceURL(t *testing.T) {
-	cases := []struct{ base, want string }{
-		{"", "https://api.deepseek.com/user/balance"},
-		{"  ", "https://api.deepseek.com/user/balance"},
-		{"https://api.deepseek.com", "https://api.deepseek.com/user/balance"},
-		{"https://api.deepseek.com/", "https://api.deepseek.com/user/balance"},
-		{"https://api.deepseek.com/v1", "https://api.deepseek.com/user/balance"},
-		{"https://api.deepseek.com/v1/", "https://api.deepseek.com/user/balance"},
-		{"https://proxy.example.com/deepseek/v1", "https://proxy.example.com/deepseek/user/balance"},
-	}
-	for _, c := range cases {
-		if got := balanceURL(c.base); got != c.want {
-			t.Fatalf("balanceURL(%q) = %q, want %q", c.base, got, c.want)
-		}
-	}
+// setBalanceURL 把余额端点指向测试服务器，返回恢复函数（defer 用）。
+func setBalanceURL(t *testing.T, base string) func() {
+	t.Helper()
+	old := balanceURL
+	balanceURL = base + "/user/balance"
+	return func() { balanceURL = old }
 }
 
 // 两个包各自声明了 DeepSeek 默认端点（balance 不 import llm，反之亦然）。

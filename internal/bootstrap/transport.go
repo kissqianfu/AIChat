@@ -101,8 +101,6 @@ func runWebhook(ctx context.Context, cfg *config.Config, logger *slog.Logger, ap
 }
 
 // runWebSocket 跑 WS 网关（断线重连/Resume 由 SDK 负责）。
-
-// runWebSocket 跑 WS 网关（断线重连/Resume 由 SDK 负责）。
 func runWebSocket(ctx context.Context, cfg *config.Config, logger *slog.Logger, appID string,
 	sender *qqapi.Adapter, sessions *repo.SessionRepo, events *repo.EventRepo, handle func(context.Context, *event.Event)) error {
 	transport, err := ws.New(ws.Options{
@@ -126,8 +124,6 @@ func runWebSocket(ctx context.Context, cfg *config.Config, logger *slog.Logger, 
 }
 
 // runBoth 同时开两种通道（docs/00 §2.4：互为备份）；任一失败则整体退出。
-
-// runBoth 同时开两种通道（docs/00 §2.4：互为备份）；任一失败则整体退出。
 func runBoth(ctx context.Context, cfg *config.Config, logger *slog.Logger, appID, appSecret string,
 	sender *qqapi.Adapter, events *repo.EventRepo, sessions *repo.SessionRepo,
 	handle func(context.Context, *event.Event)) error {
@@ -149,8 +145,6 @@ func runBoth(ctx context.Context, cfg *config.Config, logger *slog.Logger, appID
 		return nil
 	}
 }
-
-// intentsOf 返回平台 intent 位（2026-10-31 配置项已删）：固定群聊+单聊（bit25）+ 互动（bit26）。
 
 // intentsOf 返回平台 intent 位（2026-10-31 配置项已删）：固定群聊+单聊（bit25）+ 互动（bit26）。
 func intentsOf() uint32 {

@@ -52,9 +52,6 @@ func (w *wiring) welcomeText(ctx context.Context, kind, who string) string {
 
 // buildFollowup 构造"补一句"（P1 拟人化）：features.followup 开启且依赖齐全才启用。
 // 判断/生成都走 chat.fast；发送复用 bot 的 REST adapter；额度复用被动预算。
-
-// buildFollowup 构造"补一句"（P1 拟人化）：features.followup 开启且依赖齐全才启用。
-// 判断/生成都走 chat.fast；发送复用 bot 的 REST adapter；额度复用被动预算。
 func (w *wiring) buildFollowup() *followup.Followup {
 	if !w.cfg.Features["followup"] {
 		w.logger.Info("补一句未启用（features.followup=false）")

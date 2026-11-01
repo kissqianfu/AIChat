@@ -24,12 +24,16 @@ import (
 // balanceMaxBody 限制余额响应读取（这个响应很小，给 64KiB 富余）。
 const balanceMaxBody = 64 << 10
 
-// DefaultBaseURL 是余额接口的默认端点（配置里 base_url 留空时用它）。
+// DefaultBaseURL 是余额接口的官方端点根。
 //
 // 与 internal/llm/deepseek.DefaultBaseURL 同值，但这里不 import 那个包：
 // 余额不该依赖调用栈（balance 不 import llm，反向 import 会成环）。
 // 两边是否漂移由 balance_test.go 的一条断言盯着。
 const DefaultBaseURL = "https://api.deepseek.com"
+
+// balanceURL 是余额接口地址（测试里覆写它来指向 httptest 服务器）。
+// 余额不在 /v1 下，直接从官方根拼；端点不可配（配置已没有 base_url）。
+var balanceURL = DefaultBaseURL + "/user/balance"
 
 // BalanceInfo 是单个币种的余额明细。
 //
@@ -49,19 +53,15 @@ type Balance struct {
 }
 
 // FetchBalance 查询账户余额。
-//
-// baseURL 接受两种写法：https://api.deepseek.com 与 .../v1（chat 用后者）。
-// 余额接口不在 /v1 下，所以这里先剥掉尾部 /v1 再拼 /user/balance。
-func FetchBalance(ctx context.Context, client *http.Client, baseURL, apiKey string) (*Balance, error) {
+func FetchBalance(ctx context.Context, client *http.Client, apiKey string) (*Balance, error) {
 	if apiKey == "" {
 		return nil, errors.New("deepseek: 查询余额需要 API Key")
 	}
 	if client == nil {
 		return nil, errors.New("deepseek: 查询余额需要 http.Client")
 	}
-	url := balanceURL(baseURL)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, balanceURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("deepseek: 构造余额请求: %w", err)
 	}
@@ -86,15 +86,6 @@ func FetchBalance(ctx context.Context, client *http.Client, baseURL, apiKey stri
 		return nil, fmt.Errorf("deepseek: 解析余额响应: %w", err)
 	}
 	return &out, nil
-}
-
-// balanceURL 拼余额地址：余额不在 /v1 下，所以先剥尾部 /v1 再拼 /user/balance。
-// 留空走默认端点——配置里 base_url 空着就是「用官方的」，不该变成空 URL 请求。
-func balanceURL(baseURL string) string {
-	if strings.TrimSpace(baseURL) == "" {
-		baseURL = DefaultBaseURL
-	}
-	return strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(baseURL), "/"), "/v1") + "/user/balance"
 }
 
 // Amount 把官方返回的金额字符串解析成数值（打点用）。
@@ -126,8 +117,8 @@ func (b BalanceInfo) Amount(field string) (float64, error) {
 //
 // 保留 FetchBalance 返回原生结构：字段形状有测试锁着（官方改字段名时那种
 // 测试先炸），而这个函数只做搬运。
-func FetchSnapshot(ctx context.Context, client *http.Client, baseURL, apiKey string) (*balance.Snapshot, error) {
-	b, err := FetchBalance(ctx, client, baseURL, apiKey)
+func FetchSnapshot(ctx context.Context, client *http.Client, apiKey string) (*balance.Snapshot, error) {
+	b, err := FetchBalance(ctx, client, apiKey)
 	if err != nil {
 		return nil, err
 	}

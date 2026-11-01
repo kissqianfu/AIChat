@@ -127,7 +127,7 @@ func (w *wiring) fetchBalance(ctx context.Context, client *http.Client, t balanc
 		observability.CountBalanceError(t.provider)
 		return fmt.Errorf("取密钥 %q: %w", t.apiKeyName, err)
 	}
-	snap, err := fetch(ctx, client, "", key)
+	snap, err := fetch(ctx, client, key)
 	if err != nil {
 		observability.CountBalanceError(t.provider)
 		return err
@@ -211,8 +211,6 @@ func (w *wiring) startReminderLoop(ctx context.Context) {
 	})
 }
 
-// runTransport 按配置启动接入通道：事件先入管道（按会话串行），再交给 handler。
-
 // startEvery 每 interval 执行一次 fn（单实例，无需分布式锁；失败只告警）。
 func startEvery(ctx context.Context, interval time.Duration, logger *slog.Logger, fn func(context.Context) error) {
 	go func() {
@@ -230,8 +228,6 @@ func startEvery(ctx context.Context, interval time.Duration, logger *slog.Logger
 		}
 	}()
 }
-
-// startDaily 起一个每日任务：按 cron 槽位触发一次（进程离线错过则当日跳过，无补跑）。
 
 // startDaily 起一个每日任务：按 cron 槽位触发一次（进程离线错过则当日跳过，无补跑）。
 func startDaily(ctx context.Context, clk clock.Clock, daily schedule.Daily, logger *slog.Logger, fn func(context.Context) error) {

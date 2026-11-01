@@ -52,8 +52,6 @@ func (w *wiring) registerCommands(disp *admin.Dispatcher) {
 }
 
 // helpRun /help：非管理员只见三行固定文案（docs/01 §6.5.2），管理员见指令清单。
-
-// helpRun /help：非管理员只见三行固定文案（docs/01 §6.5.2），管理员见指令清单。
 func (w *wiring) helpRun(disp *admin.Dispatcher) func(context.Context, port.Event, []string) (string, bool) {
 	return func(ctx context.Context, ev port.Event, _ []string) (string, bool) {
 		if disp.RoleOf(ctx, ev) == admin.RoleUser {
@@ -70,9 +68,6 @@ func (w *wiring) helpRun(disp *admin.Dispatcher) func(context.Context, port.Even
 		return strings.Join(disp.Names(role), "\n"), true
 	}
 }
-
-// sendHelpPanel 发送 /help 可点面板（docs/01 §6.5）：单聊指令按钮，点击自动发送对应指令。
-// 仅管理员可见；发送失败（平台无键盘权限等）只告警——文本版 /help 始终先发，面板是增强。
 
 // sendHelpPanel 发送 /help 可点面板（docs/01 §6.5）：单聊指令按钮，点击自动发送对应指令。
 // 仅管理员可见；发送失败（平台无键盘权限等）只告警——文本版 /help 始终先发，面板是增强。
@@ -115,8 +110,6 @@ func (w *wiring) sendHelpPanel(ctx context.Context, ev port.Event, role admin.Ro
 }
 
 // keyRun /key list：密钥清单（owner）。
-
-// keyRun /key list：密钥清单（owner）。
 func (w *wiring) keyRun() func(context.Context, port.Event, []string) (string, bool) {
 	return func(ctx context.Context, _ port.Event, _ []string) (string, bool) {
 		metas, err := w.keyRepo.ListMeta(ctx)
@@ -130,8 +123,6 @@ func (w *wiring) keyRun() func(context.Context, port.Event, []string) (string, b
 		return strings.TrimSpace(b.String()), true
 	}
 }
-
-// reloadRun /reload：人设与模型配置重载（owner，需 /confirm 二次确认）。
 
 // reloadRun /reload：人设与模型配置重载（owner，需 /confirm 二次确认）。
 func (w *wiring) reloadRun(confirmStore *admin.ConfirmStore) func(context.Context, port.Event, []string) (string, bool) {
@@ -154,8 +145,6 @@ func (w *wiring) reloadRun(confirmStore *admin.ConfirmStore) func(context.Contex
 		return "确认 reload：5 分钟内回复 /confirm " + token, true
 	}
 }
-
-// confirmRun /confirm：高危操作确认（确认码一次性）。
 
 // confirmRun /confirm：高危操作确认（确认码一次性）。
 func confirmRun(confirmStore *admin.ConfirmStore) func(context.Context, port.Event, []string) (string, bool) {

@@ -51,7 +51,7 @@ type ImageConfig struct {
 	HTTP    *http.Client
 }
 
-// NewImageGen 构造文生图闭包，签名与 adapter.ImageFunc / tools.ImageGenFn 一致。
+// NewImageGen 构造文生图闭包，签名与 tools.ImageGenFn 一致。
 func NewImageGen(cfg ImageConfig) func(ctx context.Context, prompt string) ([]byte, string, error) {
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {

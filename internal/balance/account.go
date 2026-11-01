@@ -61,7 +61,7 @@ type Snapshot struct {
 
 // BalanceFetcher 拉一次账户余额。
 //
-// baseURL 由配置给，可为空——为空时各实现用自己的默认端点。之所以不由调用方
-// 统一拼：各家余额接口的层级并不一致（DeepSeek 在 /user/balance、不在 /v1 下；
+// 端点由各实现自己定死（配置已没有 base_url 可覆盖）；之所以不由调用方统一拼：
+// 各家余额接口的层级并不一致（DeepSeek 在 /user/balance、不在 /v1 下；
 // Breeze 在 /v1/balance），统一拼只会拼错一家。
-type BalanceFetcher func(ctx context.Context, client *http.Client, baseURL, apiKey string) (*Snapshot, error)
+type BalanceFetcher func(ctx context.Context, client *http.Client, apiKey string) (*Snapshot, error)

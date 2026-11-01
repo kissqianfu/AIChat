@@ -27,8 +27,9 @@ func TestFetchBalance(t *testing.T) {
 		_, _ = w.Write([]byte(balanceBody))
 	}))
 	defer srv.Close()
+	defer setBalanceURL(t, srv.URL)()
 
-	b, err := FetchBalance(context.Background(), srv.Client(), srv.URL+"/v1", "brz_test")
+	b, err := FetchBalance(context.Background(), srv.Client(), "brz_test")
 	if err != nil {
 		t.Fatalf("FetchBalance() error = %v", err)
 	}
@@ -44,20 +45,12 @@ func TestFetchBalance(t *testing.T) {
 	}
 }
 
-// base_url 写成裸域名时补 /v1；写成 .../v1 时不重复补。
-func TestEndpoint(t *testing.T) {
-	cases := []struct{ base, want string }{
-		{"", DefaultBaseURL + "/balance"},
-		{"https://api.breeze.blue", "https://api.breeze.blue/v1/balance"},
-		{"https://api.breeze.blue/", "https://api.breeze.blue/v1/balance"},
-		{"https://api.breeze.blue/v1", "https://api.breeze.blue/v1/balance"},
-		{"https://api.breeze.blue/v1/", "https://api.breeze.blue/v1/balance"},
-	}
-	for _, c := range cases {
-		if got := endpoint(c.base); got != c.want {
-			t.Fatalf("endpoint(%q) = %q, want %q", c.base, got, c.want)
-		}
-	}
+// setBalanceURL 把余额端点指向测试服务器，返回恢复函数（defer 用）。
+func setBalanceURL(t *testing.T, base string) func() {
+	t.Helper()
+	old := balanceURL
+	balanceURL = base + "/v1/balance"
+	return func() { balanceURL = old }
 }
 
 // 毫积分优先：balance 是四舍五入后的展示值，用它算会丢精度。
@@ -81,8 +74,9 @@ func TestFetchSnapshot(t *testing.T) {
 		_, _ = w.Write([]byte(balanceBody))
 	}))
 	defer srv.Close()
+	defer setBalanceURL(t, srv.URL)()
 
-	snap, err := FetchSnapshot(context.Background(), srv.Client(), srv.URL+"/v1", "k")
+	snap, err := FetchSnapshot(context.Background(), srv.Client(), "k")
 	if err != nil {
 		t.Fatalf("FetchSnapshot() error = %v", err)
 	}
@@ -104,8 +98,9 @@ func TestSnapshotUnavailableWhenEmpty(t *testing.T) {
 		_, _ = w.Write([]byte(`{"balance":0,"balance_millicredits":0,"scale":1000}`))
 	}))
 	defer srv.Close()
+	defer setBalanceURL(t, srv.URL)()
 
-	snap, err := FetchSnapshot(context.Background(), srv.Client(), srv.URL+"/v1", "k")
+	snap, err := FetchSnapshot(context.Background(), srv.Client(), "k")
 	if err != nil {
 		t.Fatalf("FetchSnapshot() error = %v", err)
 	}
@@ -120,16 +115,17 @@ func TestFetchBalanceErrors(t *testing.T) {
 		_, _ = w.Write([]byte(`{"detail":"invalid api key"}`))
 	}))
 	defer srv.Close()
+	defer setBalanceURL(t, srv.URL)()
 
-	if _, err := FetchBalance(context.Background(), srv.Client(), srv.URL+"/v1", "bad"); err == nil {
+	if _, err := FetchBalance(context.Background(), srv.Client(), "bad"); err == nil {
 		t.Fatal("401 应返回错误")
 	} else if !strings.Contains(err.Error(), "401") || !strings.Contains(err.Error(), "invalid api key") {
 		t.Fatalf("错误信息 = %q，应含状态码与响应体片段", err)
 	}
-	if _, err := FetchBalance(context.Background(), srv.Client(), srv.URL, ""); err == nil {
+	if _, err := FetchBalance(context.Background(), srv.Client(), ""); err == nil {
 		t.Fatal("空密钥应返回错误")
 	}
-	if _, err := FetchBalance(context.Background(), nil, srv.URL, "k"); err == nil {
+	if _, err := FetchBalance(context.Background(), nil, "k"); err == nil {
 		t.Fatal("nil http.Client 应返回错误")
 	}
 }

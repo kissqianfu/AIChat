@@ -46,25 +46,10 @@ const (
 // startReminderLoop → runTransport。
 
 // dailyCheckInterval 是每日任务检查间隔（1 分钟槽位，30s 足够且不浪费）。
-
-// dailyCheckInterval 是每日任务检查间隔（1 分钟槽位，30s 足够且不浪费）。
 const dailyCheckInterval = 30 * time.Second
 
 // reminderCheckInterval 是提醒扫描间隔。
-
-// reminderCheckInterval 是提醒扫描间隔。
-
-// reminderCheckInterval 是提醒扫描间隔。
 const reminderCheckInterval = 15 * time.Second
-
-// startEvery 每 interval 执行一次 fn（单实例，无需分布式锁；失败只告警）。
-
-// Run 启动服务并阻塞到 ctx 取消；任何装配失败都返回 error（fail-fast）。
-//
-// 装配按阶段拆分（F8 收敛），Run 只负责编排，不持有装配细节：
-// openStore → connectBot → buildModels → buildPersona → openRepos →
-// buildMemory → buildToolbox → buildOrchestrator → wireAdmin →
-// startReminderLoop → runTransport。
 
 // Run 启动服务并阻塞到 ctx 取消；任何装配失败都返回 error（fail-fast）。
 //
@@ -168,10 +153,6 @@ type wiring struct {
 }
 
 // openStore 打开数据库、收紧文件权限、启动备份并按需迁移（docs/02 §1/§7）。
-
-// openStore 打开数据库、收紧文件权限、启动备份并按需迁移（docs/02 §1/§7）。
-
-// openStore 打开数据库、收紧文件权限、启动备份并按需迁移（docs/02 §1/§7）。
 func (w *wiring) openStore(ctx context.Context) error {
 	store, err := db.Open(ctx, db.Config{
 		Driver:       w.cfg.DB.Driver,
@@ -198,10 +179,6 @@ func (w *wiring) openStore(ctx context.Context) error {
 	}
 	return nil
 }
-
-// connectBot 读取 bot_secret 凭据并构造 REST adapter，拉取机器人自身信息（失败拒绝启动）。
-
-// connectBot 读取 bot_secret 凭据并构造 REST adapter，拉取机器人自身信息（失败拒绝启动）。
 
 // connectBot 读取 bot_secret 凭据并构造 REST adapter，拉取机器人自身信息（失败拒绝启动）。
 func (w *wiring) connectBot(ctx context.Context) error {
@@ -233,8 +210,6 @@ func (w *wiring) connectBot(ctx context.Context) error {
 // 槽位引用与复杂度路由（原 models.yaml 已并入 config.yaml，2026-10-31）。
 
 // buildPersona 加载人设（失败拒绝启动）并按需启动目录 watch（docs/08 §5）。
-
-// buildPersona 加载人设（失败拒绝启动）并按需启动目录 watch（docs/08 §5）。
 func (w *wiring) buildPersona(ctx context.Context) error {
 	personaStore, err := persona.NewStore(persona.Config{
 		Dir:      w.cfg.Persona.Dir,
@@ -257,10 +232,6 @@ func (w *wiring) buildPersona(ctx context.Context) error {
 }
 
 // openRepos 创建各业务 repo 与小引擎（情绪/预算/分时段/主动配额/调用日志）。
-
-// openRepos 创建各业务 repo 与小引擎（情绪/预算/分时段/主动配额/调用日志）。
-
-// openRepos 创建各业务 repo 与小引擎（情绪/预算/分时段/主动配额/调用日志）。
 func (w *wiring) openRepos() {
 	w.appLoc = appLocation(w.logger, w.cfg.App.Timezone)
 	w.messageRepo = repo.NewMessageRepo(w.store, w.clk)
@@ -281,12 +252,6 @@ func (w *wiring) openRepos() {
 	w.scheduler = schedule.New(w.clk, w.schedStore).WithExceptions(w.schedStore).WithWindows(w.scheduleWindows())
 	w.proactive = newProactiveAdapter(w.store, w.clk)
 }
-
-// scheduleWindows 把 config 的 hours 规则解析成 []schedule.Window；格式已由 config 校验，
-// 这里解析失败（理论上不可达）跳过该条并告警。windows 为空时用内置默认。
-
-// scheduleWindows 把 config 的 hours 规则解析成 []schedule.Window；格式已由 config 校验，
-// 这里解析失败（理论上不可达）跳过该条并告警。windows 为空时用内置默认。
 
 // scheduleWindows 把 config 的 hours 规则解析成 []schedule.Window；格式已由 config 校验，
 // 这里解析失败（理论上不可达）跳过该条并告警。windows 为空时用内置默认。

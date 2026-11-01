@@ -29,6 +29,10 @@ import (
 // DefaultBaseURL 是 Breeze 的 API 根（TTS 与余额同一层级的 /v1）。
 const DefaultBaseURL = "https://api.breeze.blue/v1"
 
+// balanceURL 是余额接口地址（测试里覆写它来指向 httptest 服务器）。
+// TTS 与余额同一层级，直接在根上拼 /balance；端点不可配（配置已没有 base_url）。
+var balanceURL = DefaultBaseURL + "/balance"
+
 // balanceMaxBody 限制余额响应读取。实测响应里 charges/topups 会带最近若干条
 // 流水（每家都返回，不带分页参数），给 256KiB 富余；再大说明接口口径变了。
 const balanceMaxBody = 256 << 10
@@ -64,7 +68,7 @@ func (b Balance) Credits() float64 {
 }
 
 // FetchBalance 查询账户余额（原生响应）。
-func FetchBalance(ctx context.Context, client *http.Client, baseURL, apiKey string) (*Balance, error) {
+func FetchBalance(ctx context.Context, client *http.Client, apiKey string) (*Balance, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, errors.New("breeze: 查询余额需要 API Key")
 	}
@@ -72,7 +76,7 @@ func FetchBalance(ctx context.Context, client *http.Client, baseURL, apiKey stri
 		return nil, errors.New("breeze: 查询余额需要 http.Client")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint(baseURL), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, balanceURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("breeze: 构造余额请求: %w", err)
 	}
@@ -100,8 +104,8 @@ func FetchBalance(ctx context.Context, client *http.Client, baseURL, apiKey stri
 }
 
 // FetchSnapshot 是给统一余额层（balance.BalanceFetcher）用的出口。
-func FetchSnapshot(ctx context.Context, client *http.Client, baseURL, apiKey string) (*balance.Snapshot, error) {
-	b, err := FetchBalance(ctx, client, baseURL, apiKey)
+func FetchSnapshot(ctx context.Context, client *http.Client, apiKey string) (*balance.Snapshot, error) {
+	b, err := FetchBalance(ctx, client, apiKey)
 	if err != nil {
 		return nil, err
 	}
@@ -117,22 +121,6 @@ func FetchSnapshot(ctx context.Context, client *http.Client, baseURL, apiKey str
 		snap.Note = fmt.Sprintf("有流水待结算（每 %d 秒结算一次），余额可能滞后", b.SettlementIntervalS)
 	}
 	return snap, nil
-}
-
-// endpoint 拼余额地址。
-//
-// Breeze 的 base_url 通常写成 .../v1（TTS 用），余额也在同一层 /v1/balance；
-// 写成裸域名时要补 /v1。由本函数决定而不是调用方，是为了不把「各家层级不同」
-// 这件脏事漏到轮询代码里。
-func endpoint(baseURL string) string {
-	b := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if b == "" {
-		b = DefaultBaseURL
-	}
-	if strings.HasSuffix(b, "/v1") {
-		return b + "/balance"
-	}
-	return b + "/v1/balance"
 }
 
 // truncateForLog 截断错误响应体，避免把整页 HTML 灌进日志。

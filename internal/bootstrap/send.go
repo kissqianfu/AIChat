@@ -56,8 +56,6 @@ func sendText(ctx context.Context, sender *qqapi.Adapter, budget *orchestrator.B
 }
 
 // sendMediaBlocks 发一条富媒体消息（/draw 的图片；同样消耗被动额度，失败只告警）。
-
-// sendMediaBlocks 发一条富媒体消息（/draw 的图片；同样消耗被动额度，失败只告警）。
 func sendMediaBlocks(ctx context.Context, sender *qqapi.Adapter, budget *orchestrator.Budget,
 	ev port.Event, blocks []port.Block, logger *slog.Logger) {
 	if len(blocks) == 0 {
@@ -101,8 +99,6 @@ func sendEventReply(ctx context.Context, sender *qqapi.Adapter, ev port.Event, t
 	}
 	logger.Info("事件锚点已回复", "event_id", ev.ID, "msg_id", res.PlatformMsgID)
 }
-
-// sendActive 发送主动消息（无 msg_id 锚点；用于入群欢迎等）。
 
 // sendActive 发送主动消息（无 msg_id 锚点；用于入群欢迎等）。
 func sendActive(ctx context.Context, sender *qqapi.Adapter, target port.Target, text string, logger *slog.Logger) {
