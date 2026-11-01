@@ -28,33 +28,52 @@ const (
 var zeroTemp = 0.0
 
 // chatJSON 调模型并解析 JSON 到 out（温度 0）：调用/非 JSON/解析失败自动重试一次。
-func chatJSON(ctx context.Context, model port.ChatModel, system, user string, out any) error {
-	return retrySummarize(func() error {
-		content, err := chatOnce(ctx, model, system, user, &zeroTemp)
+// 每次失败打 WARN（含模型原始输出样本，便于回看截断/抽风形态），重试后成功也留痕。
+func chatJSON(ctx context.Context, log *slog.Logger, model port.ChatModel, system, user string, out any) error {
+	var lastOutput string
+	attempts, _, err := retrySummarize(func() (struct{}, error) {
+		content, err := chatOnce(ctx, log, model, system, user, &zeroTemp)
 		if err != nil {
-			return err
+			return struct{}{}, err
 		}
+		lastOutput = content
 		raw, err := jsonx.ExtractJSON(content)
 		if err != nil {
-			return fmt.Errorf("memory: 输出不是 JSON: %w", err)
+			log.Warn("memory: 输出不是 JSON", "output", truncateLog(content))
+			return struct{}{}, fmt.Errorf("memory: 输出不是 JSON: %w", err)
 		}
-		return json.Unmarshal(raw, out)
+		if err := json.Unmarshal(raw, out); err != nil {
+			log.Warn("memory: JSON 解析失败", "output", truncateLog(content), "err", err)
+			return struct{}{}, fmt.Errorf("memory: 解析 JSON: %w", err)
+		}
+		return struct{}{}, nil
 	})
+	if err != nil {
+		return err
+	}
+	if attempts > 1 {
+		log.Warn("memory: 重试后成功", "attempts", attempts, "output", truncateLog(lastOutput))
+	}
+	return nil
 }
 
 // chatText 调模型取纯文本（不设温度）：调用失败自动重试一次。
-func chatText(ctx context.Context, model port.ChatModel, system, user string) (string, error) {
-	var content string
-	err := retrySummarize(func() error {
-		var e error
-		content, e = chatOnce(ctx, model, system, user, nil)
-		return e
+func chatText(ctx context.Context, log *slog.Logger, model port.ChatModel, system, user string) (string, error) {
+	attempts, content, err := retrySummarize(func() (string, error) {
+		return chatOnce(ctx, log, model, system, user, nil)
 	})
-	return content, err
+	if err != nil {
+		return "", err
+	}
+	if attempts > 1 {
+		log.Warn("memory: 重试后成功", "attempts", attempts)
+	}
+	return content, nil
 }
 
 // chatOnce 单次模型调用（system+user 双消息，输出上限统一 summarizeTokens）。
-func chatOnce(ctx context.Context, model port.ChatModel, system, user string, temp *float64) (string, error) {
+// 调用失败打 WARN 带错误详情。
+func chatOnce(ctx context.Context, log *slog.Logger, model port.ChatModel, system, user string, temp *float64) (string, error) {
 	resp, err := model.Chat(ctx, port.ChatRequest{
 		Messages: []port.ChatMessage{
 			{Role: port.ChatRoleSystem, Content: system},
@@ -64,22 +83,27 @@ func chatOnce(ctx context.Context, model port.ChatModel, system, user string, te
 		MaxTokens:   summarizeTokens,
 	})
 	if err != nil {
+		log.Warn("memory: 模型调用失败", "err", err)
 		return "", fmt.Errorf("memory: 模型调用: %w", err)
 	}
 	return resp.Content, nil
 }
 
-// retrySummarize 最多执行 summarizeAttempts 次，成功即停；全失败返回最后一次错误。
-func retrySummarize(fn func() error) error {
-	var lastErr error
-	for i := 0; i < summarizeAttempts; i++ {
-		if err := fn(); err == nil {
-			return nil
-		} else {
-			lastErr = err
+// retrySummarize 最多执行 summarizeAttempts 次，成功即停；返回尝试次数，
+// 全失败返回最后一次错误与当时的累计结果。
+func retrySummarize[T any](fn func() (T, error)) (attempts int, result T, err error) {
+	for i := 1; i <= summarizeAttempts; i++ {
+		result, err = fn()
+		if err == nil {
+			return i, result, nil
 		}
 	}
-	return lastErr
+	return summarizeAttempts, result, err
+}
+
+// truncateLog 截断模型原始输出作日志样本（防长输出刷屏）。
+func truncateLog(s string) string {
+	return truncateRunes(s, 200)
 }
 
 // Store 是记忆引擎需要的存储能力（repo.MemoryRepo 实现）。

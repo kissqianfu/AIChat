@@ -73,7 +73,7 @@ func (e *Extractor) Extract(ctx context.Context, userText string) ([]Fact, error
 	}
 	var facts []Fact
 	// 调用/截断/非 JSON 由 chatJSON 自动重试一次（与情景摘要同一公共层）。
-	if err := chatJSON(ctx, model, extractPrompt, userText, &facts); err != nil {
+	if err := chatJSON(ctx, e.logger, model, extractPrompt, userText, &facts); err != nil {
 		return nil, err
 	}
 	return validateFacts(facts), nil
