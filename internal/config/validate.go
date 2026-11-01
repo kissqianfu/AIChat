@@ -158,8 +158,9 @@ func validateHours(c *HoursConfig, add func(string, ...any)) {
 	}
 }
 
-// validateModels 校验模型槽位：chat.fast 必填（base_url/model 非空）；
-// 其余对话槽位填了就要完整；能力槽位（asr/tts/imagegen）允许 base_url 空 = 关闭。
+// validateModels 校验模型槽位：chat.fast 必填（model 非空，base_url 与 protocol 至少一个）；
+// 其余槽位填了就要完整。2026-11-01 起「关掉某能力 = 不写这个槽位」，
+// base_url 退回纯地址含义（空 = 用该协议的默认端点），不再兼当开关。
 func validateModels(m *ModelsConfig, add func(string, ...any)) {
 	checkChat := func(name string, s ModelSlot) {
 		if s.Primary.Model == "" {
@@ -207,7 +208,7 @@ func validateModels(m *ModelsConfig, add func(string, ...any)) {
 		refs := append([]ModelRef{slot.Primary}, slot.Fallbacks...)
 		for i, ref := range refs {
 			if ref.BaseURL == "" {
-				continue // 空 = 关闭该能力，或用 protocol 默认端点
+				continue // 空 = 用该协议的默认端点
 			}
 			where := fmt.Sprintf("models.%s.primary.base_url", name)
 			if i > 0 {

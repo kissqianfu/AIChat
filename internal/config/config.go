@@ -115,9 +115,9 @@ type WindowConfig struct {
 // start > end 表示跨零点；start == end 视为全天。
 
 // ModelsConfig 是模型槽位（原 configs/models.yaml 并入，2026-10-31）：
-// 每个引用自带 base_url 与 api_key_name（→ api_key 表），不再有 providers 中转。
-// 对话/视觉槽位走 OpenAI 兼容协议（deepseek 客户端）；tts 槽位固定 ElevenLabs 协议；
-// asr/imagegen/tts 的 base_url 为空 = 该能力关闭。
+// 每个引用自带 protocol 与 api_key_name（→ api_key 表），不再有 providers 中转。
+// 2026-11-01 起地址也归 protocol：端点写在各家模块里，配置不必再写 base_url，
+// **关掉某个能力 = 不写这个槽位**（整段删掉），而不是把 base_url 写空。
 type ModelsConfig struct {
 	Chat     map[string]ModelSlot `yaml:"chat"` // chat.fast 必填（默认槽位写死代码）
 	Vision   *ModelSlot           `yaml:"vision"`
@@ -154,8 +154,8 @@ type ModelRef struct {
 	// 它同时决定「谁家的哪个接口来干活」（internal/llm/provider 按 (能力, 协议) 查
 	// 各家自己登记的构造器）与「按哪张价目表算钱」（internal/billing），
 	// 词表在 internal/llm/protocol。写了某家却没实现该接口时，registry 加载即报错。
-	// 留空 = 该槽位默认协议。base_url 留空时用协议默认端点（search/asr/tts/imagegen
-	// 的 base_url 仍按老规矩：空 = 该能力关闭）。
+	// 留空 = 该槽位默认协议。base_url 可省略——地址由 protocol 决定（默认端点在各家
+	// register.go 里登记）；只有走代理/自建网关时才写它。
 	Protocol string `yaml:"protocol,omitempty"`
 	Voice    string `yaml:"voice,omitempty"` // 仅 tts 槽位：留空 = TTS 关闭
 	Size     string `yaml:"size,omitempty"`  // 仅 imagegen 槽位

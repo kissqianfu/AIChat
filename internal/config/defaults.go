@@ -30,12 +30,15 @@ func Default() Config {
 		},
 		Emotion: EmotionConfig{MaxDailyDelta: 0.6},
 		// Hours 留空：schedule 侧用内置默认（工作日 09:00-18:00 = work、每日 23:00-07:00 = night）。
+		// 默认值里也不写 base_url（2026-11-01）：地址归 protocol，由各家的 register.go
+		// 声明默认端点。留空的字段不会覆盖用户配置，但 **非空默认值会**——尤其 vision 是
+		// 指针槽位，yaml 解码复用它，写死 api.deepseek.com 会跟着串到换成千问的配置上。
 		Models: ModelsConfig{
 			Chat: map[string]ModelSlot{
-				"fast":   {Primary: ModelRef{BaseURL: "https://api.deepseek.com", APIKeyName: "deepseek", Model: "deepseek-flash"}},
-				"strong": {Primary: ModelRef{BaseURL: "https://api.deepseek.com", APIKeyName: "deepseek", Model: "deepseek-v4-pro"}},
+				"fast":   {Primary: ModelRef{Protocol: "deepseek", APIKeyName: "deepseek", Model: "deepseek-flash"}},
+				"strong": {Primary: ModelRef{Protocol: "deepseek", APIKeyName: "deepseek", Model: "deepseek-v4-pro"}},
 			},
-			Vision: &ModelSlot{Primary: ModelRef{BaseURL: "https://api.deepseek.com", APIKeyName: "deepseek", Model: "deepseek-flash"}},
+			Vision: &ModelSlot{Primary: ModelRef{Protocol: "deepseek", APIKeyName: "deepseek", Model: "deepseek-flash"}},
 		},
 		Sticker: StickerConfig{Enabled: true, MaxBytes: 2 << 20},
 		ImageGen: ImageGenConfig{

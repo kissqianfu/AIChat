@@ -37,15 +37,17 @@ func (a *guardAdapter) Check(ctx context.Context, ev port.Event) (bool, string) 
 
 // asrFor 按 models.asr 槽位构造转写器（协议由槽位的 protocol 给出，空 = openai）。
 //
-// 返回 (nil, nil) 表示「这个能力是关的」：槽位缺失或 base_url 为空。base_url 空
-// 在本项目里一直是语音能力的成本开关，不拿协议默认端点去偷偷打开它。
-// 真出错（协议没有实现、缺 model 名之类）才返回 error，由调用方告警降级。
+// 槽位缺失 = 这个能力关着（返回 nil, nil）。2026-11-01 起「关闭」只由槽位存在性
+// 表达：base_url 退回纯地址含义，留空就用该协议登记的默认端点，不再兼当成本开关
+// ——否则「地址没写」和「能力关掉」是同一个状态，永远说不清。
+// 真出错（协议没有实现、缺 model 名、key 不存在）才返回 error，由调用方告警降级。
 func asrFor(ctx context.Context, reg *registry.Registry, keys keyGetter, logger *slog.Logger) (provider.Transcriber, error) {
 	if reg == nil || keys == nil {
 		return nil, errors.New("registry 或密钥仓库为空")
 	}
 	ref, ok := reg.SlotModel("asr")
-	if !ok || strings.TrimSpace(ref.BaseURL) == "" {
+	if !ok {
+		logger.Info("语音识别未启用", "reason", "config.yaml 没有 asr 槽位")
 		return nil, nil
 	}
 	if strings.TrimSpace(ref.Model) == "" {
@@ -69,9 +71,13 @@ func asrFor(ctx context.Context, reg *registry.Registry, keys keyGetter, logger 
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("语音转文字已启用",
-		"protocol", protocol.Or(ref.Protocol, protocol.DefaultFor("asr")),
-		"base_url", ref.BaseURL, "model", ref.Model)
+	// 日志打实际生效的端点（配置没写 base_url 时由 provider 补默认值）。
+	proto := protocol.Or(ref.Protocol, protocol.DefaultFor("asr"))
+	base := strings.TrimSpace(ref.BaseURL)
+	if base == "" {
+		base = provider.ASRDefaultBaseURL(proto)
+	}
+	logger.Info("语音转文字已启用", "protocol", proto, "base_url", base, "model", ref.Model)
 	return tr, nil
 }
 
@@ -90,24 +96,21 @@ func llmCostMicros(prompt, completion int) int64 {
 // 2026-11-01 起画图也走 protocol 分派（与对话侧对称）：openai 走 /images/generations
 // 拿 b64，qianwen 走百炼原生 multimodal-generation 拿临时 URL 再当场下载。
 //
-// base_url 留空时用该协议的默认端点——但只在**显式写了 protocol** 时才这么兜底：
-// 两个都空等于"这个能力没配"，按历史语义视为关闭，而不是拿 openai 默认端点去试。
+// 槽位缺失返回 (nil, nil) = 这个能力没配，调用方静默跳过。地址只由 protocol 决定
+// （端点在各家 register.go 里登记），配置里要覆盖才写 base_url。
 func imageGenFnFor(reg *registry.Registry, keys keyGetter, model, size string) (tools.ImageGenFn, error) {
 	if reg == nil || keys == nil {
 		return nil, errors.New("registry 或密钥仓库为空")
 	}
 	ref, ok := reg.SlotModel("imagegen")
 	if !ok {
-		return nil, errors.New("config.yaml 没有 models.imagegen 槽位")
+		return nil, nil
 	}
 	if strings.TrimSpace(model) == "" {
 		return nil, errors.New("models.imagegen 缺 model 名")
 	}
 	if strings.TrimSpace(ref.APIKeyName) == "" {
 		return nil, errors.New("models.imagegen 缺 api_key_name")
-	}
-	if strings.TrimSpace(ref.BaseURL) == "" && strings.TrimSpace(ref.Protocol) == "" {
-		return nil, errors.New("models.imagegen 既没有 base_url 也没有 protocol（按未配置处理）")
 	}
 	fn, err := provider.NewImage(provider.ImageParams{
 		Protocol: ref.Protocol,

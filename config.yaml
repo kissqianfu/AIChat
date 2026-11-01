@@ -103,40 +103,41 @@ balance:
 #      asr: openai(默认)/qianwen；tts: elevenlabs(默认)/breeze；imagegen: openai(默认)/qianwen；search: deepseek。
 #   2. 用哪张价目表算钱：deepseek 的价目在 internal/billing/deepseek（峰谷两档 ×2、
 #      搜索/抓取 5 元/千次）。没登记计费规则的 protocol 会记 unpriced 指标，不会静默按 0 元。
-# 对话/视觉写了 protocol 可省 base_url（用该家默认端点）；asr/imagegen/tts 两者都空 = 该能力关闭。${ENV} 会展开。
+# 地址不写在配置里（2026-11-01）：端点由各家模块自己的 register.go 声明，base_url 只在
+# 走代理/自建网关时覆盖。**关掉某个能力 = 不写这个槽位**（整段删掉或注释掉）。${ENV} 会展开。
 # 热加载：改本段后 1s 内生效（失败保留旧版），/reload 也可手动触发（保留 5 层快照可回滚）。
 models:
   # 对话槽位（复杂度判别与插话打分也用 chat.fast）
   chat:   
     # 日常闲聊；默认槽位
     fast:                         
-      primary: { protocol: deepseek, base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
+      primary: { protocol: deepseek, model: deepseek-flash, api_key_name: deepseek }
     # 复杂推理/长文
     strong:                       
-      primary: { protocol: deepseek, base_url: https://api.deepseek.com, model: deepseek-v4-pro, api_key_name: deepseek }
+      primary: { protocol: deepseek, model: deepseek-v4-pro, api_key_name: deepseek }
 
   # 视觉理解：DeepSeek 只有 flash 支持图片（且图片只能出现在 user 消息）
   vision:
-    primary: { protocol: deepseek, base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
+    primary: { protocol: deepseek, model: deepseek-flash, api_key_name: deepseek }
 
   
-  # 语音识别 base_url 留空 = 该能力关闭
-  asr:
-    primary: { protocol: openai, base_url: "", model: whisper-1, api_key_name: openai }
-  # 语音合成 base_url 留空 = 该能力关闭（breeze 需 voice 与 base_url 同时填）
+  # 语音识别：不用时不写这段（不写槽位 = 关闭）。启用示例（key 要真实存在）：
+  # asr:
+  #   primary: { protocol: qianwen, model: qwen3-asr-flash, api_key_name: qianwen }
+  # 语音合成：breeze = mp3 直传；elevenlabs = pcm → 本地 silk（voice 为空 = 不启用）
   tts:
-    primary: { protocol: elevenlabs, base_url: "", model: eleven_turbo_v2_5, voice: "", api_key_name: elevenlabs }
-  # 图像生成 base_url 留空 = 该能力关闭
+    primary: { protocol: elevenlabs, model: eleven_turbo_v2_5, voice: "", api_key_name: elevenlabs }
+  # 图像生成：还需 imagegen.enabled 打开
   # 画图：protocol 选接口形态。qianwen 走百炼原生 multimodal-generation
   # （/compatible-mode/v1/images/generations 是 404），model 必须是 qwen-image-2.0 这类真实名字，
   # size 写 1024x1024 即可（会自动换成百炼的 1024*1024）。
   imagegen:
-    primary: { protocol: qianwen, base_url: https://dashscope.aliyuncs.com, model: qwen-image-2.0, size: 1024x1024, api_key_name: qianwen }
+    primary: { protocol: qianwen, model: qwen-image-2.0, size: 1024x1024, api_key_name: qianwen }
   # 联网搜索（web_search）/抓取（web_fetch）：无需 model 名。
   # protocol: deepseek = web_fetch 走官方 Fetch 接口（服务端渲染 + Markdown，¥5/千次，
   # 失败自动回退直连），搜索/抓取按次计费也按 deepseek 价目算。
   search:
-    primary: { protocol: deepseek, base_url: https://api.deepseek.com, api_key_name: deepseek }
+    primary: { protocol: deepseek, api_key_name: deepseek }
 
 
 # 配置级灰度开关（M4-6）：改这里 + 重启即可关掉某能力

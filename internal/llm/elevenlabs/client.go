@@ -18,6 +18,11 @@ import (
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 )
 
+// DefaultBaseURL 是 ElevenLabs 官方 API 根（POST {base}/text-to-speech/{voice}）。
+//
+// 配置里不写 base_url 时用它；只有走自建网关才需要在槽位里覆盖。
+const DefaultBaseURL = "https://api.elevenlabs.io/v1"
+
 // Config 是 elevenlabs 客户端配置。
 type Config struct {
 	APIKey  string

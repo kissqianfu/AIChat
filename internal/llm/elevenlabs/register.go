@@ -1,8 +1,9 @@
 // register.go：把 elevenlabs 协议登记成 tts 实现（PCM → 本地 silk 编码）。
 //
-// 默认端点故意留空：TTS 端点因账号/空间而异（官方、自建、网关），而且
-// models.tts.base_url 为空在本项目里就是「语音关掉」的成本开关——给它一个默认值
-// 等于把一个"以为关了"的能力悄悄打开，开始按字符计费。
+// 端点用官方默认值（client.go 的 DefaultBaseURL）：2026-11-01 起地址也归 protocol，
+// 「语音关掉」由「不写 models.tts 槽位」表达，不再靠 base_url 写空——那个约定让
+// 「地址没配」和「能力关掉」变成同一个状态，谁也说不清是关着还是配漏了。
+// 走自建网关/代理时，在槽位里覆盖 base_url 即可。
 package elevenlabs
 
 import (
@@ -12,7 +13,7 @@ import (
 )
 
 func init() {
-	provider.RegisterTTS(protocol.ElevenLabs, "", func(p provider.TTSParams) (provider.Synthesizer, error) {
+	provider.RegisterTTS(protocol.ElevenLabs, DefaultBaseURL, func(p provider.TTSParams) (provider.Synthesizer, error) {
 		client, err := New(Config{
 			APIKey:  p.APIKey,
 			BaseURL: p.BaseURL,

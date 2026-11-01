@@ -191,6 +191,47 @@ func TestRepoConfigFileParses(t *testing.T) {
 	}
 }
 
+// 默认值不许带 base_url（2026-11-01）：地址归 protocol，由各家的 register.go 声明。
+// 这条不是洁癖——vision 是 *ModelSlot 指针槽位，yaml 解码会**复用**默认指针，
+// 默认值里写死 api.deepseek.com，就会跟着串到「换成千问」的配置上：配置写对了却连错地方。
+func TestDefaultsCarryNoBaseURL(t *testing.T) {
+	cfg := Default()
+	for name, slot := range cfg.Models.Chat {
+		if slot.Primary.BaseURL != "" {
+			t.Fatalf("models.chat.%s 默认 base_url = %q，want 空", name, slot.Primary.BaseURL)
+		}
+	}
+	if cfg.Models.Vision == nil {
+		t.Fatal("默认 vision 槽位不应为空（视觉默认开）")
+	}
+	if got := cfg.Models.Vision.Primary.BaseURL; got != "" {
+		t.Fatalf("models.vision 默认 base_url = %q，want 空", got)
+	}
+}
+
+// 只写 protocol 的 vision 必须保持 base_url 空（不被默认值串掉、也不被校验拒掉）。
+func TestVisionWithoutBaseURLStaysEmpty(t *testing.T) {
+	cfg, err := LoadBytes([]byte(`
+app:
+  timezone: Asia/Shanghai
+models:
+  chat:
+    fast:
+      primary: { protocol: qianwen, model: qwen-plus, api_key_name: qianwen }
+  vision:
+    primary: { protocol: qianwen, model: qwen-vl-plus, api_key_name: qianwen }
+`))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if got := cfg.Models.Vision.Primary.BaseURL; got != "" {
+		t.Fatalf("vision.base_url = %q，want 空", got)
+	}
+	if got := cfg.Models.Vision.Primary.Protocol; got != "qianwen" {
+		t.Fatalf("vision.protocol = %q，want qianwen", got)
+	}
+}
+
 // writeConfigFile 在临时目录写一份配置，返回路径。
 func writeConfigFile(t *testing.T, content string) string {
 	t.Helper()

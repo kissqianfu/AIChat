@@ -102,43 +102,43 @@ balance:
     #   api_key_name: breezeblue
 
 
-# 模型槽位：每个引用自带 protocol / base_url / api_key_name（→ api_key 表）。
-#   protocol 决定「用谁家的模型」，base_url 是「连哪个地址」，两者不能混：
+# 模型槽位：每个引用自带 protocol / model / api_key_name（→ api_key 表）。
+#   protocol 决定「用谁家的接口」，连哪个地址也由它决定——端点写在各家自己的
+#   模块里（internal/llm/<vendor>），所以配置里**不需要 base_url**；只有走代理
+#   或自建网关时才在槽位里覆盖它。
 #     对话/视觉  deepseek（默认）| openai | qianwen
 #     asr        openai（默认）| qianwen
 #     tts        elevenlabs（默认）| breeze
 #     imagegen   openai（默认，/images/generations）| qianwen（百炼原生接口）
 #     search     deepseek
-#   对话/视觉：写了 protocol 就可以省 base_url（用该家默认端点；千问补 /compatible-mode/v1）；
-#     两个都空会启动报错。**只有模型名不校验**——写错的 model 要到调用时才暴露。
-#   能力槽位（asr/tts/imagegen）：base_url 与 protocol 都空 = 该能力关闭。
+#   **关掉某个能力 = 不写这个槽位**（整段删掉或注释掉），不是把 base_url 写空。
+#   只有模型名不校验——写错的 model 要到调用时才暴露。
 models:
   chat:
     # 日常闲聊，默认槽位（必填）。protocol 省略 = deepseek。
     fast:
-      primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
+      primary: { protocol: deepseek, model: deepseek-flash, api_key_name: deepseek }
     # 复杂推理/长文；缺失时回落 fast
     strong:
-      primary: { base_url: https://api.deepseek.com, model: deepseek-v4-pro, api_key_name: deepseek }
-  # 图像理解：不用时整段删除（写了就必须给 base_url/model，不支持留空关闭）
+      primary: { protocol: deepseek, model: deepseek-v4-pro, api_key_name: deepseek }
+  # 图像理解：不用时整段删除
   vision:
-    primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
-  # 语音识别：base_url 留空 = 关闭；protocol: openai（默认）| qianwen
-  asr:
-    primary: { base_url: https://maas.qianwenaiapi.com/compatible-mode/v1, model: qwen3-asr-flash, api_key_name: asr, protocol: qianwen }
-  # 语音合成：base_url 留空 = 关闭；protocol: elevenlabs（默认，pcm→silk）| breeze（mp3 直传）
+    primary: { protocol: deepseek, model: deepseek-flash, api_key_name: deepseek }
+  # 语音识别：不用时不写这段（写了就要有 model 和存在的 key）。启用示例：
+  #   asr:
+  #     primary: { protocol: qianwen, model: qwen3-asr-flash, api_key_name: qianwen }
+  # 语音合成：elevenlabs（pcm→silk）| breeze（mp3 直传，免 silk 编码器）
   tts:
-    primary: { base_url: https://api.breeze.blue/v1, model: breeze-tts-2, voice: voc_p36dbdewwvae, api_key_name: breezeblue, protocol: breeze }
-  # 图像生成：还需下面 imagegen.enabled 打开。protocol 决定接口形态——
-  #   qianwen：model 写 qwen-image-2.0（不是 Qwen-Image-3.0 之类），base_url 可写
-  #            https://dashscope.aliyuncs.com（裸域名即可，会补原生路径）；出图默认 1024*1024
+    primary: { protocol: breeze, model: breeze-tts-2, voice: voc_p36dbdewwvae, api_key_name: breezeblue }
+  # 图像生成：还需上面 imagegen.enabled 打开。protocol 决定接口形态——
+  #   qianwen：model 写 qwen-image-2.0（不是 Qwen-Image-3.0 之类），出图默认 1024*1024
   #   openai ：model 写 dall-e-3 / gpt-image-1
   # size 用 1024x1024 写法即可，千问侧会自动换成 1024*1024。
   imagegen:
-    primary: { base_url: "", model: dall-e-3, size: 1024x1024, api_key_name: openai }
-  # 联网搜索/抓取端点：base_url 留空 = 默认 api.deepseek.com + 密钥 deepseek
+    primary: { protocol: openai, model: dall-e-3, size: 1024x1024, api_key_name: openai }
+  # 联网搜索/抓取：deepseek（默认端点 api.deepseek.com）
   search:
-    primary: { base_url: https://api.deepseek.com, api_key_name: deepseek, protocol: deepseek }
+    primary: { protocol: deepseek, api_key_name: deepseek }
 
 
 # 功能灰度（未列出的项按代码默认；这里是生产在用的组合）

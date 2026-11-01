@@ -77,12 +77,19 @@ func (w *wiring) buildToolbox(ctx context.Context) error {
 	if err := toolbox.Register(tools.NewReminderTool(w.reminderRepo, w.clk)); err != nil {
 		return fmt.Errorf("bootstrap: 注册提醒工具: %w", err)
 	}
-	// 语音（M7-3b / docs/08 §3.9）：models.tts 槽位 base_url 与 voice 非空才注册；否则只告警不阻塞启动。
+	// 语音（M7-3b / docs/08 §3.9）：写了 models.tts 槽位且 voice 非空才注册。
+	// 不写这个槽位 = 语音关着（2026-11-01 起「关闭」只由槽位存在性表达，地址归 protocol）。
 	if ref, ok := w.reg.SlotModel("tts"); ok && ref.Voice != "" {
-		if engine, err := newVoiceEngine(ctx, w.reg, w.keyRepo, w.logger); err != nil {
+		engine, err := newVoiceEngine(ctx, w.reg, w.keyRepo, w.logger)
+		switch {
+		case err != nil:
 			w.logger.Warn("语音工具未启用", "err", err)
-		} else if err := toolbox.Register(tools.NewVoiceTool(engine)); err != nil {
-			return fmt.Errorf("bootstrap: 注册语音工具: %w", err)
+		case engine == nil:
+			w.logger.Info("语音工具未启用", "reason", "没有可用的 tts 槽位")
+		default:
+			if err := toolbox.Register(tools.NewVoiceTool(engine)); err != nil {
+				return fmt.Errorf("bootstrap: 注册语音工具: %w", err)
+			}
 		}
 	}
 	// 视觉理解：models.vision 槽位存在才注册（否则不向模型暴露该工具）。
@@ -100,15 +107,20 @@ func (w *wiring) buildToolbox(ctx context.Context) error {
 	// qianwen 走百炼原生 multimodal-generation）。开关仍是 imagegen.enabled。
 	if w.cfg.ImageGen.Enabled {
 		genFn, err := imageGenFnFor(w.reg, w.keyRepo, w.imageModel, w.imageSize)
-		if err != nil {
+		switch {
+		case err != nil:
 			w.logger.Warn("画图工具未启用", "err", err)
-		} else {
+		case genFn == nil:
+			w.logger.Info("画图工具未启用", "reason", "config.yaml 没有 models.imagegen 槽位")
+		default:
 			taker := &drawQuotaTaker{repo: repo.NewProactiveRepo(w.store, w.clk)}
 			if err := toolbox.Register(tools.NewImageGenTool(genFn, taker, w.cfg.ImageGen.MaxPerDay, w.logger)); err != nil {
 				return fmt.Errorf("bootstrap: 注册画图工具: %w", err)
 			}
 			ref, _ := w.reg.SlotModel("imagegen")
-			w.logger.Info("画图工具已启用", "protocol", ref.Protocol, "model", w.imageModel, "size", w.imageSize)
+			w.logger.Info("画图工具已启用",
+				"protocol", protocol.Or(ref.Protocol, protocol.DefaultFor("imagegen")),
+				"model", w.imageModel, "size", w.imageSize)
 		}
 	}
 	return nil

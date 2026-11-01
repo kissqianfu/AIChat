@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/kissqianfu/aichat/internal/billing"
@@ -102,14 +103,11 @@ type keyGetter interface {
 // newVoiceEngine 按 models.tts 槽位的 protocol 构造语音引擎：
 // elevenlabs 走 PCM → 本地 silk 编码；breeze 走 mp3 直传（免 silk 编码器依赖）。
 // 两种产物的差异收在各自的子模块里，这里只负责取密钥、填参数。
-// base_url 为空 = TTS 关闭；调用方需保证槽位存在且 voice 非空。
+// 槽位缺失返回 (nil, nil) = 语音没配；地址由 protocol 决定（端点在各家 register.go）。
 func newVoiceEngine(ctx context.Context, reg *registry.Registry, keys keyGetter, logger *slog.Logger) (provider.Synthesizer, error) {
 	ref, ok := reg.SlotModel("tts")
 	if !ok {
-		return nil, errors.New("tts: config.yaml 缺 tts 槽位")
-	}
-	if ref.BaseURL == "" {
-		return nil, errors.New("tts: models.tts.base_url 为空（TTS 关闭，用户后填）")
+		return nil, nil
 	}
 	key, err := keys.Key(ctx, ref.APIKeyName)
 	if err != nil {
@@ -126,9 +124,15 @@ func newVoiceEngine(ctx context.Context, reg *registry.Registry, keys keyGetter,
 	if err != nil {
 		return nil, err
 	}
+	// 日志里给的是**实际生效**的端点：config 不写 base_url 时由 provider 补默认值，
+	// 这里若照抄 ref.BaseURL 会打出一个空地址，看起来像没配。
+	proto := protocol.Or(ref.Protocol, protocol.DefaultFor("tts"))
+	base := strings.TrimSpace(ref.BaseURL)
+	if base == "" {
+		base = provider.TTSDefaultBaseURL(proto)
+	}
 	logger.Info("语音引擎已启用",
-		"protocol", protocol.Or(ref.Protocol, protocol.DefaultFor("tts")),
-		"base_url", ref.BaseURL, "model", ref.Model, "mime", synth.MIME())
+		"protocol", proto, "base_url", base, "model", ref.Model, "mime", synth.MIME())
 	return synth, nil
 }
 

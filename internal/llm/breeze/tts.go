@@ -13,13 +13,19 @@ import (
 	"github.com/kissqianfu/aichat/internal/tts"
 )
 
-// mp3MIME 是直传产物的 MIME（QQ 语音按这个填 file_type/文件名）。
-const mp3MIME = "audio/mpeg"
+const (
+	// mp3MIME 是直传产物的 MIME（QQ 语音按这个填 file_type/文件名）。
+	mp3MIME = "audio/mpeg"
+	// DefaultBaseURL 是 Breeze 的 API 根（ElevenLabs 同形：POST {base}/text-to-speech/{voice}）。
+	//
+	// 2026-11-01 起端点归各家自己声明：配置只要 protocol: breeze，地址由这里给。
+	// 「关掉语音」不再是"把 base_url 写空"，而是**不写 models.tts 槽位**——
+	// 语义从地址迁到槽位存在性，免得地址一空就分不清是关着还是配漏了。
+	DefaultBaseURL = "https://api.breeze.blue/v1"
+)
 
-// 默认端点故意留空：Breeze 的语音地址按账号/空间给，且 base_url 为空在配置层
-// 就是「语音关掉」的成本开关，不该被默认值悄悄打开。
 func init() {
-	provider.RegisterTTS(protocol.Breeze, "", func(p provider.TTSParams) (provider.Synthesizer, error) {
+	provider.RegisterTTS(protocol.Breeze, DefaultBaseURL, func(p provider.TTSParams) (provider.Synthesizer, error) {
 		client, err := elevenlabs.New(elevenlabs.Config{
 			APIKey:       p.APIKey,
 			BaseURL:      p.BaseURL,
