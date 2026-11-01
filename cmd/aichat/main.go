@@ -19,6 +19,11 @@ import (
 	"github.com/kissqianfu/aichat/internal/observability"
 )
 
+// version 是构建版本，由 CI 注入：-X main.version=<短 sha>。
+// 默认 "dev" 表示本地 go build，用来一眼区分"线上跑的是哪个提交"——
+// 以前只能靠 grep 二进制里的某个新字符串去猜，回滚时尤其难受。
+var version = "dev"
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
 	flag.Parse()
@@ -58,6 +63,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
+	logger.Info("版本已加载", "version", version)
 
 	// PID（2026-10-31）：配置 app.pid_file 时启动写入、正常退出删除（systemd Type=simple 的
 	// 运维锚点：重启脚本/监控按 pid 文件定位进程，不必解析 ps）。
