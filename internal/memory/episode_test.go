@@ -162,3 +162,50 @@ func TestEpisodeHelpers(t *testing.T) {
 		t.Fatalf("episodeParticipants = %+v", got)
 	}
 }
+
+// flakyModel 前 failTimes 次返回坏输出，之后返回好内容（重试测试用）。
+type flakyModel struct {
+	bad, good string
+	failTimes int
+	calls     int
+}
+
+func (f *flakyModel) Chat(context.Context, port.ChatRequest) (*port.ChatResponse, error) {
+	f.calls++
+	if f.calls <= f.failTimes {
+		return &port.ChatResponse{Content: f.bad}, nil
+	}
+	return &port.ChatResponse{Content: f.good}, nil
+}
+func (f *flakyModel) Stream(context.Context, port.ChatRequest) (port.ChatStream, error) {
+	return nil, errors.New("no stream")
+}
+
+func TestEpisodeSummarizeRetry(t *testing.T) {
+	store := &fakeEpisodeStore{}
+	good := `{"summary":"重试后成功","emotion":"joy"}`
+	model := &flakyModel{bad: "模型抽风了，给不了 JSON", good: good, failTimes: 1}
+	engine := NewEpisodeEngine(store, func(context.Context) (port.ChatModel, error) {
+		return model, nil
+	}, nil, clock.NewFrozen(time.Unix(1700000000, 0)))
+	if err := engine.Summarize(context.Background(), episodeTestEvent(), episodeMessages()); err != nil {
+		t.Fatalf("第一次坏输出后应重试成功: %v", err)
+	}
+	if model.calls != 2 {
+		t.Fatalf("calls = %d, want 2", model.calls)
+	}
+	if len(store.inserted) != 1 || store.inserted[0].Summary != "重试后成功" {
+		t.Fatalf("inserted = %+v", store.inserted)
+	}
+	// 两次都坏：报最后一次的错误，不落库。
+	store2 := &fakeEpisodeStore{}
+	model2 := &flakyModel{bad: "还是坏", good: good, failTimes: 99}
+	if err := NewEpisodeEngine(store2, func(context.Context) (port.ChatModel, error) {
+		return model2, nil
+	}, nil, clock.NewFrozen(time.Unix(1700000000, 0))).Summarize(context.Background(), episodeTestEvent(), episodeMessages()); err == nil {
+		t.Fatal("两次都坏应报错")
+	}
+	if model2.calls != 2 || len(store2.inserted) != 0 {
+		t.Fatalf("calls=%d inserted=%+v", model2.calls, store2.inserted)
+	}
+}
