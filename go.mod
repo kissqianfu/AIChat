@@ -36,10 +36,8 @@ require (
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/kissqianfu/QQ-SDK v0.0.0
+	github.com/kissqianfu/QQ-SDK v0.1.0
 	github.com/prometheus/client_golang v1.25.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.34.0
 )
-
-replace github.com/kissqianfu/QQ-SDK => ../QQ-SDK
