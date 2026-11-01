@@ -32,7 +32,7 @@ func (w *wiring) buildMemory(ctx context.Context) {
 	}
 	if embedder != nil {
 		memEngine = memEngine.WithEmbedder(embedder)
-		w.embedOne = queryEmbedder(embedder)
+		w.embedOne = embedder.EmbedOne // 方法值；embedder 为 nil 时 embedOne 保持 nil = 词面路径
 	}
 	memEngine.StartReviewLoop(ctx, time.Hour)
 	if w.cfg.Features["memory_extract"] {

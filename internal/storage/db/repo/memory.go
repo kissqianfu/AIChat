@@ -291,34 +291,31 @@ func mmrSelect(items []port.MemoryItem, limit int, lambda float64) []port.Memory
 	return chosen
 }
 
-// itemSimilarity 是两条记忆的相似度：同维向量用余弦（负相关记 0），否则用 bigram Jaccard。
+// itemSimilarity 是两条记忆的相似度（MMR 去冗余用）：规则见 cosineOrJaccard。
 func itemSimilarity(a, b port.MemoryItem) float64 {
-	if len(a.Vec) > 0 && len(a.Vec) == len(b.Vec) {
-		if cos := text.Cosine(a.Vec, b.Vec); cos > 0 {
+	return cosineOrJaccard(a.Vec, b.Vec, bigramSet(a.Content), b.Content)
+}
+
+// cosineOrJaccard 是"向量优先、词面兜底"的相似度统一实现：同维向量用余弦
+// （负相关记 0），维度不齐（未回填/漂移）时回退 bigram Jaccard。
+// aBigrams 是 a 侧文本的 bigram 集（query 在循环外预算一次；b 侧逐条现算）。
+func cosineOrJaccard(aVec, bVec []float32, aBigrams map[string]struct{}, bText string) float64 {
+	if len(aVec) > 0 && len(aVec) == len(bVec) {
+		if cos := text.Cosine(aVec, bVec); cos > 0 {
 			return cos
 		}
 		return 0
 	}
-	return jaccard(bigramSet(a.Content), bigramSet(b.Content))
+	return jaccard(aBigrams, bigramSet(bText))
 }
 
 // estimateTokens 粗估 token（中文约 2 字/token）。
 func estimateTokens(s string) int { return len([]rune(s))/2 + 1 }
 
 // scoreMemory 是精排唯一实现（docs/02 §1.2）：0.45 相似度 + 0.25 可提取度 +
-// 0.20 重要度 + 0.10 新近度 + 0.30 置顶加分。
-// 相似度：有同维向量（query + 条目都已回填）用余弦，否则回退 bigram Jaccard
-// （无 embed 槽位的离线路径，表里的 embedding 列为空时自动落到这里）。
+// 0.20 重要度 + 0.10 新近度 + 0.30 置顶加分。相似度规则见 cosineOrJaccard。
 func scoreMemory(item port.MemoryItem, queryBigrams map[string]struct{}, queryVec []float32, now time.Time) float64 {
-	var sim float64
-	if len(queryVec) > 0 && len(queryVec) == len(item.Vec) {
-		sim = text.Cosine(queryVec, item.Vec)
-		if sim < 0 {
-			sim = 0
-		}
-	} else {
-		sim = jaccard(queryBigrams, bigramSet(item.Content))
-	}
+	sim := cosineOrJaccard(queryVec, item.Vec, queryBigrams, item.Content)
 	score := weightSimilarity*sim +
 		weightRetrievability*retrievability(item.LastAccess, now, item.Stability) +
 		weightImportance*item.Importance +
