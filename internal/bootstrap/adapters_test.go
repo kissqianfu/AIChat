@@ -139,20 +139,3 @@ func TestTruncateIssues(t *testing.T) {
 		t.Fatalf("truncateIssues(long) 长度 = %d", len([]rune(long)))
 	}
 }
-
-func TestLLMCostMicros(t *testing.T) {
-	tests := []struct {
-		prompt, completion int
-		want               int64
-	}{
-		{0, 0, 0},
-		{1, 1, 0},
-		{100, 200, 70},    // 14 + 56
-		{1000, 1000, 420}, // 140 + 280
-	}
-	for _, tt := range tests {
-		if got := llmCostMicros(tt.prompt, tt.completion); got != tt.want {
-			t.Fatalf("llmCostMicros(%d,%d) = %d, want %d", tt.prompt, tt.completion, got, tt.want)
-		}
-	}
-}

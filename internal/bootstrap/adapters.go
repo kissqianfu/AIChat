@@ -86,11 +86,6 @@ type auditWriter interface {
 	Audit(ctx context.Context, actor, action, detail string) error
 }
 
-// llmCostMicros 按平台常量估算一次 LLM 调用成本（micro-USD）：$0.14/M prompt、$0.28/M completion。
-func llmCostMicros(prompt, completion int) int64 {
-	return int64(prompt)*14/100 + int64(completion)*28/100
-}
-
 // imageGenFnFor 按 models.imagegen 槽位构造画图闭包：protocol 决定用谁家。
 //
 // 2026-11-01 起画图也走 protocol 分派（与对话侧对称）：openai 走 /images/generations

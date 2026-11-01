@@ -147,10 +147,10 @@ func (w *wiring) policyResolver() func(context.Context, port.Event) (schedule.Po
 	}
 }
 
-// callLogger 记录一次 LLM 调用成本（价格常量见 llmCostMicros，M7-9/0014）。
+// callLogger 记录一次 LLM 调用（token 数与结束原因；不记成本，M7-9/0014→0027）。
 func (w *wiring) callLogger() func(context.Context, port.Event, int, int, string) {
 	return func(ctx context.Context, ev port.Event, prompt, completion int, finish string) {
-		_ = w.logsRepo.InsertLLM(ctx, ev.ID, "chat", prompt, completion, finish, llmCostMicros(prompt, completion))
+		_ = w.logsRepo.InsertLLM(ctx, ev.ID, "chat", prompt, completion, finish)
 	}
 }
 
