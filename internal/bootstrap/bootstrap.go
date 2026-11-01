@@ -102,7 +102,7 @@ func Run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	if err := w.buildToolbox(ctx); err != nil {
 		return err
 	}
-	orch, err := w.buildOrchestrator()
+	orch, err := w.buildOrchestrator(ctx)
 	if err != nil {
 		return err
 	}

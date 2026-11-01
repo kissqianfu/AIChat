@@ -40,7 +40,7 @@ func (a *guardAdapter) Check(ctx context.Context, ev port.Event) (bool, string) 
 // 返回 (nil, nil) 表示「这个能力是关的」：槽位缺失或 base_url 为空。base_url 空
 // 在本项目里一直是语音能力的成本开关，不拿协议默认端点去偷偷打开它。
 // 真出错（协议没有实现、缺 model 名之类）才返回 error，由调用方告警降级。
-func asrFor(reg *registry.Registry, keys keyGetter, logger *slog.Logger) (provider.Transcriber, error) {
+func asrFor(ctx context.Context, reg *registry.Registry, keys keyGetter, logger *slog.Logger) (provider.Transcriber, error) {
 	if reg == nil || keys == nil {
 		return nil, errors.New("registry 或密钥仓库为空")
 	}
@@ -53,6 +53,12 @@ func asrFor(reg *registry.Registry, keys keyGetter, logger *slog.Logger) (provid
 	}
 	if strings.TrimSpace(ref.APIKeyName) == "" {
 		return nil, errors.New("models.asr 缺 api_key_name")
+	}
+	// 密钥在这里就取一次：转写器是回调式取 key（支持轮换），构造时不碰库，
+	// 于是"key 名写错/库里没这条"会一路潜伏到第一条语音消息才炸——那时用户
+	// 看到的是"语音没反应"。这里先探一次，让它在启动日志里现形。
+	if _, err := keys.Key(ctx, ref.APIKeyName); err != nil {
+		return nil, fmt.Errorf("models.asr 取密钥 %q 失败（语音识别已关闭）: %w", ref.APIKeyName, err)
 	}
 	tr, err := provider.NewASR(provider.ASRParams{
 		Protocol: ref.Protocol,

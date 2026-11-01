@@ -191,7 +191,7 @@ func (w *wiring) hasSlot(name string) bool {
 }
 
 // buildOrchestrator 组装准入闸门与编排器（消息处理核心）。
-func (w *wiring) buildOrchestrator() (*orchestrator.Orchestrator, error) {
+func (w *wiring) buildOrchestrator(ctx context.Context) (*orchestrator.Orchestrator, error) {
 	var stickerCollector orchestrator.StickerCollector
 	if w.cfg.Sticker.Enabled {
 		stickerCollector = w.buildStickerCollector()
@@ -199,7 +199,7 @@ func (w *wiring) buildOrchestrator() (*orchestrator.Orchestrator, error) {
 	// 语音转文字（models.asr）：protocol 决定走哪家（openai 是 multipart 上传，
 	// qianwen 是 chat 的 input_audio），差异全在各家自己的模块里。配置有问题只告警，
 	// 不阻塞启动——ASR 挂了就退化成"只看文字"。
-	transcriber, err := asrFor(w.reg, w.keyRepo, w.logger)
+	transcriber, err := asrFor(ctx, w.reg, w.keyRepo, w.logger)
 	if err != nil {
 		w.logger.Warn("语音转文字未启用", "err", err)
 	}
