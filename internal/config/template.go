@@ -116,7 +116,7 @@ models:
   #   tts:
   #     primary: { protocol: qianwen, model: qwen-audio-3.0-tts-flash, voice: longanhuan_v3.6, api_key_name: qianwen }
   tts:
-    primary: { protocol: qianwen, model: qwen-audio-3.0-tts-flash, voice: longanhuan_v3.6, api_key_name: qianwen }
+    primary: { protocol: breeze, model: breeze-tts-2, voice: voc_p36dbdewwvae, api_key_name: breezeblue }
   
   # 图像生成，protocol: openai（默认）| qianwen（百炼原生接口）
   # 还需上面 imagegen.enabled 打开。protocol 决定接口形态——

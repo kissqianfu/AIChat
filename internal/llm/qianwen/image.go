@@ -220,27 +220,11 @@ func downloadImage(ctx context.Context, client *http.Client, imageURL string) ([
 	if !strings.HasPrefix(imageURL, "http://") && !strings.HasPrefix(imageURL, "https://") {
 		return nil, "", fmt.Errorf("qianwen: 图片地址不是 URL: %q", imageURL)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	data, mime, err := fetchArtifact(ctx, client, imageURL, imageMaxBytes, "生成图")
 	if err != nil {
 		return nil, "", err
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("qianwen: 下载生成图: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("qianwen: 下载生成图 HTTP %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, imageMaxBytes))
-	if err != nil {
-		return nil, "", fmt.Errorf("qianwen: 读图片: %w", err)
-	}
-	if len(data) == 0 {
-		return nil, "", errors.New("qianwen: 图片内容为空")
-	}
 	// OSS 返回的 Content-Type 可靠；取不到时按 png（官方固定输出 png）。
-	mime := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if !strings.HasPrefix(mime, "image/") {
 		mime = "image/png"
 	}

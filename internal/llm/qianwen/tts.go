@@ -143,24 +143,6 @@ func (t *qwenTTS) Speech(ctx context.Context, voiceID, text string) ([]byte, err
 
 // download 下载音频产物（OSS 临时地址，24h 有效）。
 func (t *qwenTTS) download(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("qianwen: 构造音频下载: %w", err)
-	}
-	resp, err := t.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("qianwen: 音频下载: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("qianwen: 音频下载 HTTP %d", resp.StatusCode)
-	}
-	audio, err := io.ReadAll(io.LimitReader(resp.Body, ttsMaxBytes))
-	if err != nil {
-		return nil, fmt.Errorf("qianwen: 读音频下载: %w", err)
-	}
-	if len(audio) == 0 {
-		return nil, errors.New("qianwen: 音频下载为空")
-	}
-	return audio, nil
+	audio, _, err := fetchArtifact(ctx, t.http, url, ttsMaxBytes, "音频")
+	return audio, err
 }
