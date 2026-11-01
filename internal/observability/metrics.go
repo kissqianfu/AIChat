@@ -6,8 +6,6 @@ package observability
 // 只监听回环，公网摸不到）。模型调用族统一 aichat_llm_calls_total{slot}——
 // slot 涵盖 chat.fast/chat.strong/vision（registry 装饰器自动打点）与
 // asr/tts/imagegen（调用处手动打点），token 只在 chat 系记（asr/tts/imagegen 无 token）。
-// 费用不进看板算：打点处已按调用时刻的峰谷单价折成微元累加（见 pricing.go），
-// 看板侧只做「选窗口 + 除 1e6」，历史数据的单价自动跟着当时档位走。
 
 import (
 	"context"
@@ -22,8 +20,8 @@ import (
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
-// metricClock 是打点用的时钟（观测墙钟耗时、判定峰谷单价都是本包职责本体，
-// 走 clock 统一出口，测试可冻结在高峰/闲时档位上验证费用）。
+// metricClock 是打点用的时钟（观测墙钟耗时是本包职责本体，
+// 走 clock 统一出口，测试可冻结时间以得到确定的耗时）。
 var metricClock clock.Clock = clock.System()
 
 var (
@@ -51,20 +49,6 @@ var (
 		Name: "aichat_llm_errors_total",
 		Help: "模型调用失败数（按槽位；ASR/TTS/画图失败率看这里）",
 	}, []string{"slot"})
-	llmCostMicros = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "aichat_llm_cost_micros_total",
-		Help: "模型调用费用（人民币微元；已按调用时刻的峰谷单价折算，除 1e6 得元）",
-	}, []string{"slot"})
-	// 每次抓取时现算，空闲不打点也不会陈旧。
-	billingPeak = promauto.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "aichat_billing_peak",
-		Help: "当前是否处于模型高峰计费档（1=高峰价，0=闲时半价）",
-	}, func() float64 {
-		if isPeak(metricClock.Now()) {
-			return 1
-		}
-		return 0
-	})
 	llmLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "aichat_llm_latency_seconds",
 		Help:    "模型调用耗时",
@@ -82,12 +66,6 @@ var (
 		Name: "aichat_tool_cache_hits_total",
 		Help: "工具结果缓存命中数",
 	})
-	// 按次计费的工具（DeepSeek Search/Fetch，5 元/千次成功请求）费用。
-	// 与 token 成本同量纲（微元），看板可相加。
-	toolCostMicrosTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "aichat_tool_cost_micros_total",
-		Help: "按次计费工具的费用（人民币微元；5 元/千次成功请求，除 1e6 得元）",
-	}, []string{"tool"})
 	replyCacheLookups = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "aichat_reply_cache_lookups_total",
 		Help: "回复缓存查询数（与 hits 相除得命中率）",
@@ -158,16 +136,6 @@ func CountToolError(name string) { toolErrorsTotal.WithLabelValues(name).Inc() }
 // CountToolCacheHit 计数工具结果缓存命中。
 func CountToolCacheHit() { toolCacheHits.Inc() }
 
-// ObserveToolCost 记一次**成功**的按次计费工具请求（web_search / web_fetch）。
-//
-// 调用点必须落在 HTTP 200 且解析成功之后：缓存命中不会走到工具实现，失败请求
-// 官方不计费，两者都不该打这个点。不计费的工具名会被静默忽略。
-func ObserveToolCost(name string) {
-	if cost := toolCostMicros(name); cost > 0 {
-		toolCostMicrosTotal.WithLabelValues(name).Add(cost)
-	}
-}
-
 // CountReplyCacheLookup 计数回复缓存查询。
 func CountReplyCacheLookup() { replyCacheLookups.Inc() }
 
@@ -222,7 +190,7 @@ func ObserveLLMCall(slot LLMSlot, promptTok, completionTok, cachedTok int, laten
 	addTokens(slot, promptTok, completionTok, cachedTok)
 }
 
-// addTokens 只累加 token 与费用（不含次数与耗时）——流式响应的 usage 在收流
+// addTokens 只累加 token（不含次数与耗时）——流式响应的 usage 在收流
 // 末尾才到，此时调用次数早已记过，只能补这一半。
 func addTokens(slot LLMSlot, promptTok, completionTok, cachedTok int) {
 	if promptTok < 0 && completionTok < 0 {
@@ -238,17 +206,6 @@ func addTokens(slot LLMSlot, promptTok, completionTok, cachedTok int) {
 	if cachedTok >= 0 {
 		llmTokensTotal.WithLabelValues(s, string(TokenCached)).Add(float64(cachedTok))
 	}
-	if cost := costMicros(slot, max0(promptTok), max0(completionTok), max0(cachedTok), metricClock.Now()); cost > 0 {
-		llmCostMicros.WithLabelValues(s).Add(cost)
-	}
-}
-
-// max0 把「不计」哨兵值（-1）折成 0，供费用计算使用。
-func max0(n int) int {
-	if n < 0 {
-		return 0
-	}
-	return n
 }
 
 // MetricsHandler 返回 /metrics 的 handler。

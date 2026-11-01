@@ -200,8 +200,8 @@ func (m *streamModel) Stream(context.Context, port.ChatRequest) (port.ChatStream
 // 漏记会让主力场景的 token 与账单整块缺失。
 func TestStreamUsageTapRecordsTokens(t *testing.T) {
 	oldClock := metricClock
-	// 2026-11-02 周一 10:00（北京时间）= 高峰档，便于同时验证费用翻倍。
-	metricClock = clock.NewFrozen(time.Date(2026, 11, 2, 10, 0, 0, 0, BillingLocation))
+	// 冻住时钟只是为了让耗时打点有确定值，与 token 计数无关。
+	metricClock = clock.NewFrozen(time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC))
 	defer func() { metricClock = oldClock }()
 
 	usage := &port.TokenUsage{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100, CachedTokens: 800}
@@ -213,7 +213,6 @@ func TestStreamUsageTapRecordsTokens(t *testing.T) {
 
 	beforeTok := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenPrompt)))
 	beforeCached := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenCached)))
-	beforeCost := testutil.ToFloat64(llmCostMicros.WithLabelValues(string(SlotVision)))
 
 	stream, err := model.Stream(t.Context(), fakeReq())
 	if err != nil {
@@ -233,25 +232,5 @@ func TestStreamUsageTapRecordsTokens(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenCached))) - beforeCached; got != 800 {
 		t.Fatalf("cached tokens 增量 = %v, want 800", got)
-	}
-	// 高峰价：未命中 200×2 + 命中 800×0.04 + 输出 100×8 = 400+32+800 = 1232 微元。
-	if got := testutil.ToFloat64(llmCostMicros.WithLabelValues(string(SlotVision))) - beforeCost; got != 1232 {
-		t.Fatalf("cost 增量 = %v 微元, want 1232", got)
-	}
-}
-
-// TestObserveToolCost 验证按次计费打点：只累加计费工具，且每次 5000 微元。
-// 全局累加器，只能断言增量（同包其它测试也会写）。
-func TestObserveToolCost(t *testing.T) {
-	before := testutil.ToFloat64(toolCostMicrosTotal.WithLabelValues("web_search"))
-	ObserveToolCost("web_search")
-	ObserveToolCost("web_search")
-	ObserveToolCost("current_time") // 不计费：应被静默忽略
-	got := testutil.ToFloat64(toolCostMicrosTotal.WithLabelValues("web_search")) - before
-	if got != 2*toolUnitMicros {
-		t.Fatalf("web_search 费用增量 = %v, want %v", got, float64(2*toolUnitMicros))
-	}
-	if free := testutil.ToFloat64(toolCostMicrosTotal.WithLabelValues("current_time")); free != 0 {
-		t.Fatalf("current_time 费用 = %v, want 0", free)
 	}
 }
