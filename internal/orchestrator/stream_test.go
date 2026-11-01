@@ -100,7 +100,7 @@ func TestStreamTeeHappyPath(t *testing.T) {
 		{FinishReason: "stop", Usage: &port.TokenUsage{TotalTokens: 5}},
 	}}
 	st := &fakeStreamer{}
-	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true))
+	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true), nil)
 	if tm == m {
 		t.Fatal("应返回装饰器")
 	}
@@ -125,7 +125,7 @@ func TestStreamTeeLazyStartAndSafety(t *testing.T) {
 		{Content: "好的，"}, {Content: "这是测试内容：赌博网站推荐"},
 	}}
 	st := &fakeStreamer{}
-	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true))
+	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true), nil)
 	resp, err := tm.Chat(context.Background(), port.ChatRequest{})
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -141,10 +141,30 @@ func TestStreamTeeLazyStartAndSafety(t *testing.T) {
 	}
 }
 
+// TestStreamTeeMutedAfterAudio 验证语音发出后不再流式：
+// 这段正文马上就会被丢弃，先流到屏幕上等于让用户看了一遍"打字过程"。
+func TestStreamTeeMutedAfterAudio(t *testing.T) {
+	m := &fakeStreamModel{deltas: []port.Delta{{Content: "想聊点什么？"}}}
+	st := &fakeStreamer{}
+	var sent bool
+	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true), func() bool { return sent })
+	sent = true
+	resp, err := tm.Chat(context.Background(), port.ChatRequest{})
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if resp.Streamed || len(st.started) != 0 {
+		t.Fatalf("语音已发出不应再流式，started=%v", st.started)
+	}
+	if m.chats != 1 {
+		t.Fatalf("应直通 Chat 一次，got %d", m.chats)
+	}
+}
+
 func TestStreamTeeQuotaFallback(t *testing.T) {
 	m := &fakeStreamModel{deltas: []port.Delta{{Content: "你"}}}
 	st := &fakeStreamer{}
-	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(false))
+	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(false), nil)
 	resp, err := tm.Chat(context.Background(), port.ChatRequest{})
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -160,7 +180,7 @@ func TestStreamTeeToolCallsOnly(t *testing.T) {
 		{FinishReason: "tool_calls"},
 	}}
 	st := &fakeStreamer{}
-	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true))
+	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true), nil)
 	resp, err := tm.Chat(context.Background(), port.ChatRequest{})
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -179,7 +199,7 @@ func TestStreamTeeMixedContentToolCalls(t *testing.T) {
 		{ToolCalls: []port.ToolCall{{ID: "c1", Name: "time", Arguments: []byte("{}")}}},
 	}}
 	st := &fakeStreamer{}
-	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true))
+	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true), nil)
 	resp, err := tm.Chat(context.Background(), port.ChatRequest{})
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -195,7 +215,7 @@ func TestStreamTeeMixedContentToolCalls(t *testing.T) {
 func TestStreamTeeStartErrorFallback(t *testing.T) {
 	m := &fakeStreamModel{deltas: []port.Delta{{Content: "你"}}}
 	st := &fakeStreamer{startErr: errors.New("platform down")}
-	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true))
+	tm := newStreamTee(m, st, c2cEvent(), 1800, fakeBudget(true), nil)
 	resp, err := tm.Chat(context.Background(), port.ChatRequest{})
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -209,17 +229,17 @@ func TestStreamTeeGroupNotWrapped(t *testing.T) {
 	m := &fakeStreamModel{}
 	ev := c2cEvent()
 	ev.Scene = port.SceneGroup
-	if got := newStreamTee(m, &fakeStreamer{}, ev, 1800, fakeBudget(true)); got != m {
+	if got := newStreamTee(m, &fakeStreamer{}, ev, 1800, fakeBudget(true), nil); got != m {
 		t.Fatal("群聊不应包装流式装饰器")
 	}
 	// 无锚点同样不包装。
 	ev2 := c2cEvent()
 	ev2.MsgID = ""
-	if got := newStreamTee(m, &fakeStreamer{}, ev2, 1800, fakeBudget(true)); got != m {
+	if got := newStreamTee(m, &fakeStreamer{}, ev2, 1800, fakeBudget(true), nil); got != m {
 		t.Fatal("无 msg_id 不应包装")
 	}
 	// nil streamer 不包装。
-	if got := newStreamTee(m, nil, c2cEvent(), 1800, fakeBudget(true)); got != m {
+	if got := newStreamTee(m, nil, c2cEvent(), 1800, fakeBudget(true), nil); got != m {
 		t.Fatal("nil streamer 不应包装")
 	}
 }
@@ -231,7 +251,7 @@ func TestStreamTeeMaxRunesCut(t *testing.T) {
 		{Content: strings.Repeat("啊", 100)},
 	}}
 	st := &fakeStreamer{}
-	tm := newStreamTee(m, st, c2cEvent(), 150, fakeBudget(true))
+	tm := newStreamTee(m, st, c2cEvent(), 150, fakeBudget(true), nil)
 	resp, err := tm.Chat(context.Background(), port.ChatRequest{})
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)

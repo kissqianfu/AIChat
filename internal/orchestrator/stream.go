@@ -27,12 +27,13 @@ type streamTee struct {
 	ev       port.Event
 	maxRunes int                // 档位长度上限（提前截断收流）
 	takeSeq  func() (int, bool) // 被动额度取号（成功 Start 后消息即已发出）
+	mute     func() bool        // 返回 true 表示正文已无需再发（如语音已送达）
 
 	disabled bool // 流式不可用：后续全部直通
 }
 
 // newStreamTee 构造流式装饰器；条件不满足（非私聊/无锚点/无 streamer）返回原模型。
-func newStreamTee(inner port.ChatModel, streamer port.ReplyStreamer, ev port.Event, maxRunes int, takeSeq func() (int, bool)) port.ChatModel {
+func newStreamTee(inner port.ChatModel, streamer port.ReplyStreamer, ev port.Event, maxRunes int, takeSeq func() (int, bool), mute func() bool) port.ChatModel {
 	if streamer == nil || inner == nil {
 		return inner
 	}
@@ -42,12 +43,18 @@ func newStreamTee(inner port.ChatModel, streamer port.ReplyStreamer, ev port.Eve
 	if maxRunes <= 0 {
 		maxRunes = 1800
 	}
-	return &streamTee{inner: inner, streamer: streamer, ev: ev, maxRunes: maxRunes, takeSeq: takeSeq}
+	return &streamTee{inner: inner, streamer: streamer, ev: ev, maxRunes: maxRunes, takeSeq: takeSeq, mute: mute}
 }
 
 // Chat 优先流式；流式不可用/失败回退 inner.Chat。
 func (t *streamTee) Chat(ctx context.Context, req port.ChatRequest) (*port.ChatResponse, error) {
 	if t.disabled {
+		return t.inner.Chat(ctx, req)
+	}
+	// 正文已无意义时（语音已经发出）不能再流式：流出去的每个字用户都看得见，
+	// 而这段文字本来就要被丢掉。
+	if t.mute != nil && t.mute() {
+		t.disabled = true
 		return t.inner.Chat(ctx, req)
 	}
 	resp, err := t.tryStream(ctx, req)

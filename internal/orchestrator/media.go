@@ -28,6 +28,16 @@ func hasVoice(parts []port.Part) bool {
 	return false
 }
 
+// hasAudioBlock 判断出站媒体块里是否含语音（工具已经把话"说"出去了）。
+func hasAudioBlock(blocks []port.Block) bool {
+	for _, b := range blocks {
+		if _, ok := b.(port.AudioBlock); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // saveMedia 优先走落盘实现（返回本地路径），否则只下载（路径为空）。
 func (o *Orchestrator) saveMedia(ctx context.Context, url string) ([]byte, string, string, error) {
 	if saver, ok := o.cfg.Media.(MediaSaver); ok {

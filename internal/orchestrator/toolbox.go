@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/kissqianfu/aichat/internal/port"
 )
@@ -22,7 +23,10 @@ type Toolbox interface {
 //
 // 返回值里的 media 是工具附带的出站媒体块（如 sticker_pick 选中的表情包），
 // 由调用方作为一条额外的 IntentMedia 消息随回复发出。
-func (o *Orchestrator) chatWithTools(ctx context.Context, model port.ChatModel, req port.ChatRequest, scene port.Scene, allowTools bool) (*port.ChatResponse, []port.Block, error) {
+//
+// audioSent（可空）在本轮工具产出语音块时置位，调用方据此丢弃后续正文：
+// 语音已经把话说完了，再打一行字只会像"动作预告"。
+func (o *Orchestrator) chatWithTools(ctx context.Context, model port.ChatModel, req port.ChatRequest, scene port.Scene, allowTools bool, audioSent *atomic.Bool) (*port.ChatResponse, []port.Block, error) {
 	if !allowTools {
 		resp, err := model.Chat(ctx, req)
 		return resp, nil, err
@@ -74,6 +78,9 @@ func (o *Orchestrator) chatWithTools(ctx context.Context, model port.ChatModel, 
 			result := results[i]
 			o.cfg.Logger.Info("工具已调用", "name", call.Name, "is_error", result.IsError, "chars", len(result.Content))
 			media = append(media, result.Blocks...)
+			if audioSent != nil && hasAudioBlock(result.Blocks) {
+				audioSent.Store(true)
+			}
 			req.Messages = append(req.Messages, port.ChatMessage{
 				Role:       port.ChatRoleTool,
 				ToolCallID: call.ID,

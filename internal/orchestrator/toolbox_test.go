@@ -157,6 +157,44 @@ func TestPureMediaReply(t *testing.T) {
 	}
 }
 
+// TestVoiceReplyDropsTrailingText 验证"语音发出去之后就不再打字"。
+//
+// 模型在工具返回后仍会补一句收尾（线上实测：「想聊点什么？」），用户于是先看到
+// 一行字、几秒后才看到语音，观感就是"调用工具的过程被播了一遍"。语音已经把话说完，
+// 这句正文必须丢掉。
+func TestVoiceReplyDropsTrailingText(t *testing.T) {
+	audio := port.AudioBlock{Data: []byte("mp3"), MIME: "audio/mpeg", FileName: "voice.mp3"}
+	toolbox := &fakeToolbox{specs: []port.ToolSpec{{Name: "send_voice"}}, blocks: []port.Block{audio}}
+	model := &seqModel{responses: []*port.ChatResponse{
+		{ToolCalls: []port.ToolCall{{ID: "call-1", Name: "send_voice", Arguments: json.RawMessage(`{"text":"晚安"}`)}}},
+		{Content: "想聊点什么？"},
+	}}
+	recorder := &fakeRecorder{}
+	o, err := New(Config{Model: model, Persona: "p", Toolbox: toolbox, Recorder: recorder})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	outs, err := o.Replies(context.Background(), messageEvent())
+	if err != nil {
+		t.Fatalf("Replies() error = %v", err)
+	}
+	if len(outs) != 1 || outs[0].Intent != port.IntentMedia {
+		t.Fatalf("outs = %+v, want 只有一条语音", outs)
+	}
+	if outs[0].Seq != 1 {
+		t.Fatalf("seq = %d, want 语音排第一", outs[0].Seq)
+	}
+	var out string
+	for _, r := range recorder.recs {
+		if r.Direction == "out" {
+			out = r.Content
+		}
+	}
+	if out != "（发了语音）" {
+		t.Fatalf("落库出站 = %q, want 占位记号", out)
+	}
+}
+
 // TestToolMediaAppendedAsOutbound 验证工具结果里的媒体块会作为一条额外 IntentMedia 发出。
 func TestToolMediaAppendedAsOutbound(t *testing.T) {
 	img := port.ImageBlock{Data: []byte("png"), MIME: "image/png", FileName: "sticker.png"}
