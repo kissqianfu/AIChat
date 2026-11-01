@@ -172,11 +172,11 @@ func TestBalanceURL(t *testing.T) {
 	}
 }
 
-// 两个包各自声明了 DeepSeek 默认端点（billing 不 import llm，反之亦然）。
+// 两个包各自声明了 DeepSeek 默认端点（balance 不 import llm，反之亦然）。
 // 这条断言就是防它们漂：改一边不改另一边，这里先红。
 func TestDefaultBaseURLMatchesLLM(t *testing.T) {
 	if DefaultBaseURL != llmdeepseek.DefaultBaseURL {
-		t.Fatalf("billing/deepseek.DefaultBaseURL = %q，与 llm/deepseek.DefaultBaseURL = %q 不一致",
+		t.Fatalf("balance/deepseek.DefaultBaseURL = %q，与 llm/deepseek.DefaultBaseURL = %q 不一致",
 			DefaultBaseURL, llmdeepseek.DefaultBaseURL)
 	}
 }

@@ -172,7 +172,7 @@ func validateProtocol(slot, p string) error {
 	if proto == "" {
 		return nil
 	}
-	// search 槽位没有模型接口：它的 protocol 只决定计费口径与是否走官方 Fetch 接口。
+	// search 槽位没有模型接口：它的 protocol 只决定是否走官方 Fetch 接口。
 	if slot == "search" {
 		if proto == protocol.DeepSeek {
 			return nil
@@ -282,13 +282,9 @@ func (r *Registry) ChatModel(ctx context.Context, slot string) (port.ChatModel, 
 		if ref.Thinking {
 			model = forcedThinking{inner: model}
 		}
-		// Prometheus 打点装饰（2026-11-01）：按槽位记调用数/耗时/token，
-		// 并按 protocol 取价目表算钱（计费口径见 internal/billing）。
-		model = observability.InstrumentChatModel(model, observability.ModelInfo{
-			Slot:     observability.LLMSlot(slot),
-			Protocol: protocol.Or(ref.Protocol, protocol.DeepSeek),
-			Model:    ref.Model,
-		})
+		// Prometheus 打点装饰（2026-11-01）：按槽位记调用数/耗时/token。
+		// 花费不看这里——只看官方余额（internal/balance）。
+		model = observability.InstrumentChatModel(model, observability.LLMSlot(slot))
 		models = append(models, model)
 		names = append(names, ref.BaseURL+"/"+ref.Model)
 	}
@@ -297,7 +293,7 @@ func (r *Registry) ChatModel(ctx context.Context, slot string) (port.ChatModel, 
 
 // build 构造单个模型（调用方持有读锁）。对话/视觉槽位按 protocol 交给 provider
 // 分派——deepseek / openai / qianwen 共用 OpenAI 兼容实现，差异在 base_url 与
-// 少量 wire 细节；计费同样按这个 protocol 取价目表（observability 装饰器里做）。
+// 少量 wire 细节。
 func (r *Registry) build(ctx context.Context, slot string, ref ModelRef) (port.ChatModel, error) {
 	key, err := r.opts.Key(ctx, ref.APIKeyName)
 	if err != nil {

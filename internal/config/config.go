@@ -151,9 +151,9 @@ type ModelRef struct {
 	//                    multimodal-generation；注意它**不在** compatible-mode 下）；
 	//   search           deepseek（默认，官方 tools/search + tools/fetch）。
 	//
-	// 它同时决定「谁家的哪个接口来干活」（internal/llm/provider 按 (能力, 协议) 查
-	// 各家自己登记的构造器）与「按哪张价目表算钱」（internal/billing），
-	// 词表在 internal/llm/protocol。写了某家却没实现该接口时，registry 加载即报错。
+	// 它决定「谁家的哪个接口来干活」（internal/llm/provider 按 (能力, 协议) 查各家
+	// 自己登记的构造器），词表在 internal/llm/protocol。写了某家却没实现该接口时，
+	// registry 加载即报错。
 	// 留空 = 该槽位默认协议。base_url 可省略——地址由 protocol 决定（默认端点在各家
 	// register.go 里登记）；只有走代理/自建网关时才写它。
 	Protocol string `yaml:"protocol,omitempty"`

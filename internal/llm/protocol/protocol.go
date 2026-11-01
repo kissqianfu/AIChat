@@ -2,10 +2,7 @@
 //
 // models 段里每个引用都带 protocol：它同时回答两个问题——
 //  1. 用谁家的实现发请求（internal/llm/provider 按 (能力, 协议) 查注册表）；
-//  2. 用谁家的价目表算钱（internal/billing 按它取 Rater）。
-//
-// 两个消费者共用这一个词表，避免「客户端连 A 家、计费按 B 家」这种对不上的错。
-//
+
 // 协议 ≠ 厂商 ≠ 接口：deepseek / openai / qianwen 的对话接口都是 OpenAI 兼容的
 // Chat Completions，共用 internal/llm/compat 里的 wire 实现，但每家的
 // 「有没有实现某个接口」由该家自己的 register.go 声明——本包只管名字与槽位默认值，
@@ -45,14 +42,14 @@ func DefaultFor(slot string) string {
 	}
 }
 
-// IsChat 判断该槽位是否走对话模型（需要 ChatModel 与 token 计费）。
+// IsChat 判断该槽位是否走对话模型（需要 ChatModel 实现）。
 func IsChat(slot string) bool {
 	return strings.HasPrefix(slot, "chat.") || slot == "vision"
 }
 
 // Or 归一化协议名；空串返回 def。
 //
-// 指标 label 与计费口径用它：配置里写 "DeepSeek" 或什么都不写，最终都必须落到
+// 指标 label 用它：配置里写 "DeepSeek" 或什么都不写，最终都必须落到
 // 同一个 label 上，否则看板上同一家会裂成两条曲线。
 func Or(p, def string) string {
 	if v := Normalize(p); v != "" {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/kissqianfu/aichat/internal/billing"
+	"github.com/kissqianfu/aichat/internal/balance"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 )
@@ -136,7 +136,7 @@ func TestNewMetrics(t *testing.T) {
 
 func TestInstrumentChatModelRecords(t *testing.T) {
 	inner := &fakeChatModel{resp: fakeResp("hi", 12, 3)}
-	m := InstrumentChatModel(inner, ModelInfo{Slot: SlotChatStrong, Protocol: "test-vendor", Model: "test-model"})
+	m := InstrumentChatModel(inner, SlotChatStrong)
 	if _, err := m.Chat(t.Context(), fakeReq()); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -147,7 +147,7 @@ func TestInstrumentChatModelRecords(t *testing.T) {
 		t.Fatalf("llm_tokens_total{chat.strong,completion} = %v, want 3", got)
 	}
 	// 调用失败要计入 llm_errors（ASR/TTS/画图失败率依赖这个）。
-	failing := InstrumentChatModel(&failChatModel{}, ModelInfo{Slot: SlotVision, Protocol: "test-vendor", Model: "test-model"})
+	failing := InstrumentChatModel(&failChatModel{}, SlotVision)
 	if _, err := failing.Chat(t.Context(), fakeReq()); err == nil {
 		t.Fatal("failChatModel 应返回错误")
 	}
@@ -198,7 +198,7 @@ func (m *streamModel) Stream(context.Context, port.ChatRequest) (port.ChatStream
 
 // TestStreamUsageTapRecordsTokens 覆盖流式路径的用量补记：
 // 私聊走 streamTee → 模型 Stream，用量只在收流末尾那一帧给，
-// 漏记会让主力场景的 token 与账单整块缺失。
+// 漏记会让主力场景的 token 用量整块缺失。
 func TestStreamUsageTapRecordsTokens(t *testing.T) {
 	oldClock := metricClock
 	// 冻住时钟只是为了让耗时打点有确定值，与 token 计数无关。
@@ -210,7 +210,7 @@ func TestStreamUsageTapRecordsTokens(t *testing.T) {
 		{Content: "你"},
 		{Content: "好", Usage: usage},
 		{FinishReason: "stop", Usage: usage}, // 后续帧不再重复计
-	}}, ModelInfo{Slot: SlotVision, Protocol: "test-vendor", Model: "test-model"})
+	}}, SlotVision)
 
 	beforeTok := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenPrompt)))
 	beforeCached := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenCached)))
@@ -242,16 +242,16 @@ func TestStreamUsageTapRecordsTokens(t *testing.T) {
 // 重点锁两件事：①同一 gauge 靠 unit 区分「人民币」与「积分」，写错单位会和钱加到一起；
 // ②一家的可用位不能影响另一家（DeepSeek 欠费不该把 Breeze 也标成不可用）。
 func TestRecordBalance(t *testing.T) {
-	RecordBalance("test-deepseek", &billing.Snapshot{
+	RecordBalance("test-deepseek", &balance.Snapshot{
 		Available: true,
-		Entries: []billing.BalanceEntry{
-			{Unit: billing.CNY, Kind: billing.KindTotal, Value: 110.5},
-			{Unit: billing.CNY, Kind: billing.KindGranted, Value: 10},
-			{Unit: billing.CNY, Kind: billing.KindToppedUp, Value: 100.5},
+		Entries: []balance.BalanceEntry{
+			{Unit: balance.CNY, Kind: balance.KindTotal, Value: 110.5},
+			{Unit: balance.CNY, Kind: balance.KindGranted, Value: 10},
+			{Unit: balance.CNY, Kind: balance.KindToppedUp, Value: 100.5},
 		},
 	})
 	for kind, want := range map[string]float64{
-		billing.KindTotal: 110.5, billing.KindGranted: 10, billing.KindToppedUp: 100.5,
+		balance.KindTotal: 110.5, balance.KindGranted: 10, balance.KindToppedUp: 100.5,
 	} {
 		if got := testutil.ToFloat64(accountBalance.WithLabelValues("test-deepseek", "CNY", kind)); got != want {
 			t.Fatalf("balance{test-deepseek,CNY,%s} = %v, want %v", kind, got, want)
@@ -262,9 +262,9 @@ func TestRecordBalance(t *testing.T) {
 	}
 
 	// 积分类账户：同一个 gauge，unit=credit。写成 CNY 就会和余额相加。
-	RecordBalance("test-breeze", &billing.Snapshot{
+	RecordBalance("test-breeze", &balance.Snapshot{
 		Available: false,
-		Entries:   []billing.BalanceEntry{{Unit: billing.Credit, Kind: billing.KindTotal, Value: 4017.4}},
+		Entries:   []balance.BalanceEntry{{Unit: balance.Credit, Kind: balance.KindTotal, Value: 4017.4}},
 	})
 	if got := testutil.ToFloat64(accountBalance.WithLabelValues("test-breeze", "credit", "total")); got != 4017.4 {
 		t.Fatalf("balance{test-breeze,credit,total} = %v, want 4017.4", got)

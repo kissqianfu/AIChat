@@ -30,7 +30,7 @@ func TestDeepseekFetchOK(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := NewDeepseekFetch(fakeKey, srv.URL, "deepseek", srv.Client())
+	d := NewDeepseekFetch(fakeKey, srv.URL, srv.Client())
 	title, content, err := d.FetchPage(context.Background(), "https://example.com/a")
 	if err != nil || title != "标题" || !strings.Contains(content, "正文") {
 		t.Fatalf("FetchPage() = %q, %q, %v", title, content, err)

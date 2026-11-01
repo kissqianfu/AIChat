@@ -45,8 +45,8 @@ func (w *wiring) buildToolbox(ctx context.Context) error {
 	}
 	// 联网搜索（2026-10-31）：models.search 槽位配置 base_url/api_key_name/protocol；
 	// 槽位缺失或 base_url 为空 = 沿用历史默认（api.deepseek.com + 密钥 deepseek）。
-	// protocol 决定两件事：web_fetch 是否走官方 Fetch 接口（deepseek = 走，服务端渲染
-	// + Markdown，失败回退直连），以及搜索/抓取按哪张价目表计费（internal/billing）。
+	// protocol 目前只有 deepseek 一个实现，它决定 web_fetch 是否走官方 Fetch
+	// 接口（服务端渲染 + Markdown，失败回退直连）。
 	searchBaseURL, searchKeyName, searchProtocol := "", "deepseek", protocol.DeepSeek
 	if ref, ok := w.reg.SlotModel("search"); ok {
 		if ref.BaseURL != "" {
@@ -57,9 +57,9 @@ func (w *wiring) buildToolbox(ctx context.Context) error {
 	searchKey := func(ctx context.Context) (string, error) { return w.keyRepo.Key(ctx, searchKeyName) }
 	fetchBackend := tools.FetchBackend(nil)
 	if searchProtocol == protocol.DeepSeek {
-		fetchBackend = tools.NewDeepseekFetch(searchKey, searchBaseURL, searchProtocol, nil)
+		fetchBackend = tools.NewDeepseekFetch(searchKey, searchBaseURL, nil)
 	}
-	if err := toolbox.Register(tools.NewSearchTool(searchKey, searchBaseURL, searchProtocol, nil)); err != nil {
+	if err := toolbox.Register(tools.NewSearchTool(searchKey, searchBaseURL, nil)); err != nil {
 		return fmt.Errorf("bootstrap: 注册搜索工具: %w", err)
 	}
 	if err := toolbox.Register(tools.NewWebFetchToolWithBackend(fetchBackend, nil)); err != nil {

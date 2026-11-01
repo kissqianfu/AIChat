@@ -15,7 +15,7 @@ import (
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
-// maxImageGenPromptRunes 是绘图提示词上限（防滥用/超长计费）。
+// maxImageGenPromptRunes 是绘图提示词上限（防滥用）。
 const maxImageGenPromptRunes = 200
 
 // ImageGenFn 生成一张图片，返回 (图片字节, MIME, 错误)。

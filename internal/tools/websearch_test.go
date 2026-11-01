@@ -23,7 +23,7 @@ func TestWebSearch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewSearchTool(func(context.Context) (string, error) { return "sk-test", nil }, srv.URL, "deepseek", nil)
+	tool := NewSearchTool(func(context.Context) (string, error) { return "sk-test", nil }, srv.URL, nil)
 	args, _ := json.Marshal(map[string]any{"query": "今日天气", "count": 2})
 	res, err := tool.Invoke(context.Background(), args)
 	if err != nil {
@@ -47,7 +47,7 @@ func TestWebSearchErrors(t *testing.T) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	tool := NewSearchTool(func(context.Context) (string, error) { return "k", nil }, srv.URL, "deepseek", nil)
+	tool := NewSearchTool(func(context.Context) (string, error) { return "k", nil }, srv.URL, nil)
 	args, _ := json.Marshal(map[string]string{"query": "x"})
 	if _, err := tool.Invoke(context.Background(), args); err == nil {
 		t.Fatal("Invoke(500) error = nil")

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kissqianfu/aichat/internal/billing"
+	"github.com/kissqianfu/aichat/internal/balance"
 )
 
 // balanceBody 是 2026-11-01 线上真实响应（已裁掉 topups/charges 的长数组，
@@ -93,7 +93,7 @@ func TestFetchSnapshot(t *testing.T) {
 		t.Fatalf("Entries = %+v，应只有一条 total", snap.Entries)
 	}
 	e := snap.Entries[0]
-	if e.Unit != billing.Credit || e.Kind != billing.KindTotal || e.Value != 4017.4 {
+	if e.Unit != balance.Credit || e.Kind != balance.KindTotal || e.Value != 4017.4 {
 		t.Fatalf("entry = %+v，want credit/total/4017.4", e)
 	}
 }

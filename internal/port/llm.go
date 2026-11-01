@@ -173,7 +173,7 @@ type Synthesizer interface {
 	Synthesize(ctx context.Context, text string, voice VoiceID) (AudioRef, error)
 }
 
-// Searcher 是网页搜索 / 抓取契约（DeepSeek 官方独立 API，按次计费）。
+// Searcher 是网页搜索 / 抓取契约（DeepSeek 官方独立 API）。
 type Searcher interface {
 	Search(ctx context.Context, q string, opt SearchOpt) ([]SearchHit, error)
 	Fetch(ctx context.Context, url string) (Document, error)

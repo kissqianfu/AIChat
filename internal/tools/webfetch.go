@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kissqianfu/aichat/internal/billing"
-	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
@@ -124,29 +122,21 @@ func (t *WebFetchTool) fetchDirect(ctx context.Context, rawURL string) (port.Too
 type DeepseekFetch struct {
 	key     func(ctx context.Context) (string, error)
 	baseURL string
-	// protocol 决定按哪张价目表计费（models.search.protocol，默认 deepseek）。
-	protocol string
-	http     *http.Client
+	http    *http.Client
 }
 
-// NewDeepseekFetch 构造 DeepSeek Fetch 后端；protocol 空串按 deepseek 处理。
-//
-// 只有走官方 Fetch 才按次计费（¥5/千次）；官方失败时调用方会回退直连抓取，
-// 那条路径不花这里的钱，所以计费打点放在本方法成功返回处。
-func NewDeepseekFetch(key func(ctx context.Context) (string, error), baseURL, protocol string, client *http.Client) *DeepseekFetch {
+// NewDeepseekFetch 构造 DeepSeek Fetch 后端（官方接口，服务端渲染 + Markdown；
+// 失败时调用方回退直连抓取）。
+func NewDeepseekFetch(key func(ctx context.Context) (string, error), baseURL string, client *http.Client) *DeepseekFetch {
 	if baseURL == "" {
 		baseURL = DefaultSearchBaseURL
-	}
-	if strings.TrimSpace(protocol) == "" {
-		protocol = "deepseek"
 	}
 	if client == nil {
 		client = httpclient.New(fetchTimeout)
 	}
 	return &DeepseekFetch{
 		key: key, baseURL: strings.TrimRight(baseURL, "/"),
-		protocol: strings.ToLower(strings.TrimSpace(protocol)),
-		http:     client,
+		http: client,
 	}
 }
 
@@ -188,8 +178,6 @@ func (d *DeepseekFetch) FetchPage(ctx context.Context, rawURL string) (string, s
 	if strings.TrimSpace(parsed.Content) == "" {
 		return "", "", errors.New("web_fetch: 空正文")
 	}
-	// 计费打点（2026-11-01）：官方 200 且拿到正文才算一次成功抓取；失败不计。
-	observability.CountToolBilling(d.protocol, billing.KindFetch, 1)
 	return parsed.Title, parsed.Content, nil
 }
 

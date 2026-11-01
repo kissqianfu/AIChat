@@ -1,7 +1,7 @@
 // balance.go：Breeze Blue 账户余额（GET /v1/balance，2026-11-01）。
 //
 // 与 DeepSeek 的差别：Breeze 按**积分**（credit）扣费，不是钱。所以这里的
-// 明细单位是 billing.Credit，看板要分行展示，不能和人民币相加。
+// 明细单位是 balance.Credit，看板要分行展示，不能和人民币相加。
 //
 // 官方文档（docs.breezeblue.ai）只写了 balance / balance_millicredits /
 // settlement_pending / topups，实测响应还多了 scale 与 charges：
@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kissqianfu/aichat/internal/billing"
+	"github.com/kissqianfu/aichat/internal/balance"
 )
 
 // DefaultBaseURL 是 Breeze 的 API 根（TTS 与余额同一层级的 /v1）。
@@ -99,17 +99,17 @@ func FetchBalance(ctx context.Context, client *http.Client, baseURL, apiKey stri
 	return &out, nil
 }
 
-// FetchSnapshot 是给统一余额层（billing.BalanceFetcher）用的出口。
-func FetchSnapshot(ctx context.Context, client *http.Client, baseURL, apiKey string) (*billing.Snapshot, error) {
+// FetchSnapshot 是给统一余额层（balance.BalanceFetcher）用的出口。
+func FetchSnapshot(ctx context.Context, client *http.Client, baseURL, apiKey string) (*balance.Snapshot, error) {
 	b, err := FetchBalance(ctx, client, baseURL, apiKey)
 	if err != nil {
 		return nil, err
 	}
 	credits := b.Credits()
-	snap := &billing.Snapshot{
+	snap := &balance.Snapshot{
 		Available: credits > 0,
-		Entries: []billing.BalanceEntry{
-			{Unit: billing.Credit, Kind: billing.KindTotal, Value: credits},
+		Entries: []balance.BalanceEntry{
+			{Unit: balance.Credit, Kind: balance.KindTotal, Value: credits},
 		},
 	}
 	// 待结算时余额可能滞后（默认 60 秒一结），写进日志：数字突然往回跳多半是这个。

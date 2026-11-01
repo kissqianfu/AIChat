@@ -1,7 +1,7 @@
 // Package provider 是「protocol → 谁家的哪个接口」的唯一注册表与查表点。
 //
 // 为什么要有它：models 段里每个引用都写了 protocol，它决定三件事——请求发到哪家、
-// 用哪个实现、按哪张价目表计费。第三件在 internal/billing；前两件收在这里：
+// 用哪个实现。收在这里：
 // 调用方只说「我要对话/画图/转写/合成，协议是 X」，本包把活交给对应厂商模块。
 //
 // 本包**不认识任何一家厂商**，也没有任何 if vendor 分支。注册方向是「厂商 → 本包」：
@@ -48,7 +48,7 @@ func (c Capability) String() string { return string(c) }
 
 // CapabilityOf 把槽位名映射到能力；没有对应能力的槽位返回空串。
 //
-// search 故意返回空：它的 protocol 只用来选计费口径与是否走官方 Fetch 接口，
+// search 故意返回空：它没有模型接口，protocol 只用来选是否走官方 Fetch 接口，
 // 具体请求由 internal/tools 自己发。
 func CapabilityOf(slot string) Capability {
 	switch {

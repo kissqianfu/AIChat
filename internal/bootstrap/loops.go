@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kissqianfu/aichat/internal/billing"
-	"github.com/kissqianfu/aichat/internal/billing/breeze"
-	"github.com/kissqianfu/aichat/internal/billing/deepseek"
+	"github.com/kissqianfu/aichat/internal/balance"
+	"github.com/kissqianfu/aichat/internal/balance/breeze"
+	"github.com/kissqianfu/aichat/internal/balance/deepseek"
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
@@ -28,8 +28,8 @@ const balanceDefaultInterval = 10 * time.Minute
 // balanceFetchers 是 provider → 余额接口实现。接新的余额接口在这里加一行。
 //
 // 不做成 init 注册表：这张表就是全部事实，一眼能看全；加一行比翻注册顺序省事。
-// 新增一家的前提是它在 billing 里有子包（billing/<vendor>），否则等于又开一套口径。
-var balanceFetchers = map[string]billing.BalanceFetcher{
+// 新增一家的前提是它在 balance 里有子包（balance/<vendor>），否则等于又开一套口径。
+var balanceFetchers = map[string]balance.BalanceFetcher{
 	"deepseek": deepseek.FetchSnapshot,
 	"breeze":   breeze.FetchSnapshot,
 }
@@ -44,7 +44,7 @@ type balanceTarget struct {
 // startBalanceLoop 定时查各账户余额（2026-11-01，同日泛化到多 provider）。
 //
 // 余额是官方扣费结果，用来对账与告警（剩多少、掉多快）；token 计价是估算，
-// 用来拆「哪个槽位在花钱」——两套口径互补，见 internal/billing。
+// 花费只认它：进程内不做任何估算。
 //
 // 一家一个账户，各查各的：DeepSeek 是人民币，Breeze 是积分，两者不能相加。
 // 失败只计数与告警，不影响任何业务链路，也不重试（下一轮自然再查）。
@@ -141,9 +141,9 @@ func (w *wiring) fetchBalance(ctx context.Context, client *http.Client, t balanc
 //
 // 没有 total 就退第一条：宁可打一个非 total 的数，也不要打 0——
 // 0 在日志里会被读成「没钱了」，而实际只是口径没对上。
-func balanceTotal(snap *billing.Snapshot) (float64, string) {
+func balanceTotal(snap *balance.Snapshot) (float64, string) {
 	for _, e := range snap.Entries {
-		if e.Kind == billing.KindTotal {
+		if e.Kind == balance.KindTotal {
 			return e.Value, string(e.Unit)
 		}
 	}

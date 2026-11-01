@@ -1,12 +1,7 @@
 // balance.go：DeepSeek 账户余额查询（GET /user/balance，2026-11-01）。
 //
-// 余额与 token 计价是两条互补的口径：
-//   - 余额（本文件）：官方真值，只随实际扣费变化，用来对账、看「还剩多少」
-//     以及曲线下降的斜率（≈ 真实消耗速度）。它是告警的依据。
-//   - token 计价（deepseek.go）：按价目表估算，用来回答「哪个槽位/模型在花钱」，
-//     余额不区分槽位，只有估算能拆开。
-//
-// 两者的差额就是估算误差（峰谷判错、调价、缓存口径），对账以余额为准。
+// 余额是官方真值，只随实际扣费变化：看「还剩多少」、看曲线下降的斜率
+// （≈ 真实消耗速度）、做余额告警，都以它为准。进程内不做任何估算。
 //
 // 接口本身与 chat 槽位无关（账户级），所以这里是独立函数而不是 Model 的方法；
 // 密钥由调用方从 api_key 表读出传入。
@@ -23,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kissqianfu/aichat/internal/billing"
+	"github.com/kissqianfu/aichat/internal/balance"
 )
 
 // balanceMaxBody 限制余额响应读取（这个响应很小，给 64KiB 富余）。
@@ -32,7 +27,7 @@ const balanceMaxBody = 64 << 10
 // DefaultBaseURL 是余额接口的默认端点（配置里 base_url 留空时用它）。
 //
 // 与 internal/llm/deepseek.DefaultBaseURL 同值，但这里不 import 那个包：
-// 计费不该依赖调用栈（而且 adapter 已依赖 billing，反向 import 会成环）。
+// 余额不该依赖调用栈（balance 不 import llm，反向 import 会成环）。
 // 两边是否漂移由 balance_test.go 的一条断言盯着。
 const DefaultBaseURL = "https://api.deepseek.com"
 
@@ -126,28 +121,28 @@ func (b BalanceInfo) Amount(field string) (float64, error) {
 	return v, nil
 }
 
-// FetchSnapshot 是给统一余额层（billing.BalanceFetcher）用的出口：
+// FetchSnapshot 是给统一余额层（balance.BalanceFetcher）用的出口：
 // 把带币种的原生响应压平成「单位 + 明细」，让轮询代码不用认识 DeepSeek 的字段。
 //
 // 保留 FetchBalance 返回原生结构：字段形状有测试锁着（官方改字段名时那种
 // 测试先炸），而这个函数只做搬运。
-func FetchSnapshot(ctx context.Context, client *http.Client, baseURL, apiKey string) (*billing.Snapshot, error) {
+func FetchSnapshot(ctx context.Context, client *http.Client, baseURL, apiKey string) (*balance.Snapshot, error) {
 	b, err := FetchBalance(ctx, client, baseURL, apiKey)
 	if err != nil {
 		return nil, err
 	}
-	snap := &billing.Snapshot{Available: b.IsAvailable}
+	snap := &balance.Snapshot{Available: b.IsAvailable}
 	for _, info := range b.BalanceInfos {
-		unit := billing.Unit(strings.TrimSpace(info.Currency))
+		unit := balance.Unit(strings.TrimSpace(info.Currency))
 		if unit == "" {
-			unit = billing.CNY // 币种缺失时按人民币：当前账户就这一种
+			unit = balance.CNY // 币种缺失时按人民币：当前账户就这一种
 		}
-		for _, kind := range []string{billing.KindTotal, billing.KindGranted, billing.KindToppedUp} {
+		for _, kind := range []string{balance.KindTotal, balance.KindGranted, balance.KindToppedUp} {
 			v, err := info.Amount(kind)
 			if err != nil {
 				return nil, err
 			}
-			snap.Entries = append(snap.Entries, billing.BalanceEntry{Unit: unit, Kind: kind, Value: v})
+			snap.Entries = append(snap.Entries, balance.BalanceEntry{Unit: unit, Kind: kind, Value: v})
 		}
 	}
 	return snap, nil
