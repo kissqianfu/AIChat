@@ -3,12 +3,10 @@ package memory
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 
-	"github.com/kissqianfu/aichat/internal/platform/jsonx"
 	"github.com/kissqianfu/aichat/internal/platform/redact"
 	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
@@ -73,25 +71,10 @@ func (e *Extractor) Extract(ctx context.Context, userText string) ([]Fact, error
 	if err != nil {
 		return nil, fmt.Errorf("memory: 取抽取模型: %w", err)
 	}
-	temp := 0.0
-	resp, err := model.Chat(ctx, port.ChatRequest{
-		Messages: []port.ChatMessage{
-			{Role: port.ChatRoleSystem, Content: extractPrompt},
-			{Role: port.ChatRoleUser, Content: userText},
-		},
-		Temperature: &temp,
-		MaxTokens:   512,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("memory: 抽取调用: %w", err)
-	}
-	raw, err := jsonx.ExtractJSON(resp.Content)
-	if err != nil {
-		return nil, fmt.Errorf("memory: 抽取结果不是 JSON: %w", err)
-	}
 	var facts []Fact
-	if err := json.Unmarshal(raw, &facts); err != nil {
-		return nil, fmt.Errorf("memory: 解析抽取结果: %w", err)
+	// 调用/截断/非 JSON 由 chatJSON 自动重试一次（与情景摘要同一公共层）。
+	if err := chatJSON(ctx, model, extractPrompt, userText, &facts); err != nil {
+		return nil, err
 	}
 	return validateFacts(facts), nil
 }

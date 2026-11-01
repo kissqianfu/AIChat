@@ -70,17 +70,13 @@ func (e *RelationshipEngine) Summarize(ctx context.Context, scene port.Scene, ow
 	if err != nil {
 		return fmt.Errorf("memory: 关系摘要取模型: %w", err)
 	}
-	resp, err := model.Chat(ctx, port.ChatRequest{
-		Messages: []port.ChatMessage{
-			{Role: port.ChatRoleSystem, Content: relationshipSystemPrompt},
-			{Role: port.ChatRoleUser, Content: promptUser},
-		},
-		MaxTokens: 200,
-	})
+	// 调用失败由 chatText 自动重试一次；输出是纯文本（非 JSON），截断只会
+	// 短一点不会坏，统一输出上限见 summarizeTokens。
+	content, err := chatText(ctx, model, relationshipSystemPrompt, promptUser)
 	if err != nil {
-		return fmt.Errorf("memory: 关系摘要模型调用失败: %w", err)
+		return err
 	}
-	summary := cleanSummary(resp.Content)
+	summary := cleanSummary(content)
 	if summary == "" {
 		return nil
 	}

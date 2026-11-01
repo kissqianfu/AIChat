@@ -2,14 +2,12 @@ package memory
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/kissqianfu/aichat/internal/platform/clock"
-	"github.com/kissqianfu/aichat/internal/platform/jsonx"
 	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 )
@@ -25,14 +23,8 @@ const (
 	episodeMaxSummaryRunes = 200
 	// episodeTranscriptRunes 是喂给模型的对话文本上限。
 	episodeTranscriptRunes = 2000
-	// episodeSummarizeTokens 是摘要调用输出上限（512：长对话的 JSON 摘要在
-	// 256 下偶发被截断，截断的 JSON 无法解析）。
-	episodeSummarizeTokens = 512
 	// episodeMinMessages 是生成情景所需的最少消息数（太少没信息量）。
 	episodeMinMessages = 2
-	// episodeSummarizeAttempts 是摘要调用尝试次数：非 JSON/截断/调用错误
-	// 自动重试一次（偶发抖动重试即愈，两次都失败才告警）。
-	episodeSummarizeAttempts = 2
 )
 
 const episodePrompt = `你是对话记忆整理器。把下面一段对话压缩成一条"情景记忆"，只输出 JSON：{"summary":"≤80字，第三人称，写清发生了什么/聊了什么","emotion":"joy|anger|sorrow|fear|love|disgust|desire|neutral 之一"}。不要编造未出现的事实；没有信息量就输出 {"summary":"","emotion":"neutral"}。`
@@ -72,21 +64,13 @@ func (e *EpisodeEngine) Summarize(ctx context.Context, ev port.Event, recent []p
 	if err != nil {
 		return fmt.Errorf("memory: 取情景摘要模型: %w", err)
 	}
-	input := e.transcript(recent)
-
-	// 调用+解析失败自动重试一次：截断/偶发抽风重试即愈，两次都失败才告警。
 	var out struct {
 		Summary string `json:"summary"`
 		Emotion string `json:"emotion"`
 	}
-	var lastErr error
-	for attempt := 0; attempt < episodeSummarizeAttempts; attempt++ {
-		if lastErr = summarizeOnce(ctx, model, input, &out); lastErr == nil {
-			break
-		}
-	}
-	if lastErr != nil {
-		return lastErr
+	// 调用/截断/非 JSON 由 chatJSON 自动重试一次，两次都失败才告警。
+	if err := chatJSON(ctx, model, episodePrompt, e.transcript(recent), &out); err != nil {
+		return err
 	}
 	summary := truncateRunes(strings.TrimSpace(out.Summary), episodeMaxSummaryRunes)
 	if summary == "" {
@@ -110,31 +94,6 @@ func (e *EpisodeEngine) Summarize(ctx context.Context, ev port.Event, recent []p
 		return err
 	}
 	e.log.Info("情景记忆已写入", "event_id", ev.ID, "summary_chars", len([]rune(summary)), "messages", len(recent))
-	return nil
-}
-
-// summarizeOnce 调一次摘要模型并把输出解析到 out（JSON 提取容错见 jsonx；
-// 错误带环节前缀，调用方可重试）。
-func summarizeOnce(ctx context.Context, model port.ChatModel, input string, out any) error {
-	temp := 0.0
-	resp, err := model.Chat(ctx, port.ChatRequest{
-		Messages: []port.ChatMessage{
-			{Role: port.ChatRoleSystem, Content: episodePrompt},
-			{Role: port.ChatRoleUser, Content: input},
-		},
-		Temperature: &temp,
-		MaxTokens:   episodeSummarizeTokens,
-	})
-	if err != nil {
-		return fmt.Errorf("memory: 情景摘要调用: %w", err)
-	}
-	raw, err := jsonx.ExtractJSON(resp.Content)
-	if err != nil {
-		return fmt.Errorf("memory: 情景摘要不是 JSON: %w", err)
-	}
-	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("memory: 解析情景摘要: %w", err)
-	}
 	return nil
 }
 

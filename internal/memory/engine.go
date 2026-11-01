@@ -2,13 +2,85 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"time"
 
 	"github.com/kissqianfu/aichat/internal/platform/clock"
+	"github.com/kissqianfu/aichat/internal/platform/jsonx"
 	"github.com/kissqianfu/aichat/internal/port"
 )
+
+// —— 后台摘要/抽取类调用的公共层（episode/extract/relationship 共用）——
+
+const (
+	// summarizeTokens 是后台摘要/抽取类调用的输出上限（512：长输入的 JSON 在
+	// 更小上限下偶发被截断，截断的 JSON 无法解析）。
+	summarizeTokens = 512
+	// summarizeAttempts 是此类调用的尝试次数：截断/偶发抽风重试一次即愈，
+	// 两次都失败才告警。
+	summarizeAttempts = 2
+)
+
+// zeroTemp 是 JSON 输出类调用的温度（确定性输出）。
+var zeroTemp = 0.0
+
+// chatJSON 调模型并解析 JSON 到 out（温度 0）：调用/非 JSON/解析失败自动重试一次。
+func chatJSON(ctx context.Context, model port.ChatModel, system, user string, out any) error {
+	return retrySummarize(func() error {
+		content, err := chatOnce(ctx, model, system, user, &zeroTemp)
+		if err != nil {
+			return err
+		}
+		raw, err := jsonx.ExtractJSON(content)
+		if err != nil {
+			return fmt.Errorf("memory: 输出不是 JSON: %w", err)
+		}
+		return json.Unmarshal(raw, out)
+	})
+}
+
+// chatText 调模型取纯文本（不设温度）：调用失败自动重试一次。
+func chatText(ctx context.Context, model port.ChatModel, system, user string) (string, error) {
+	var content string
+	err := retrySummarize(func() error {
+		var e error
+		content, e = chatOnce(ctx, model, system, user, nil)
+		return e
+	})
+	return content, err
+}
+
+// chatOnce 单次模型调用（system+user 双消息，输出上限统一 summarizeTokens）。
+func chatOnce(ctx context.Context, model port.ChatModel, system, user string, temp *float64) (string, error) {
+	resp, err := model.Chat(ctx, port.ChatRequest{
+		Messages: []port.ChatMessage{
+			{Role: port.ChatRoleSystem, Content: system},
+			{Role: port.ChatRoleUser, Content: user},
+		},
+		Temperature: temp,
+		MaxTokens:   summarizeTokens,
+	})
+	if err != nil {
+		return "", fmt.Errorf("memory: 模型调用: %w", err)
+	}
+	return resp.Content, nil
+}
+
+// retrySummarize 最多执行 summarizeAttempts 次，成功即停；全失败返回最后一次错误。
+func retrySummarize(fn func() error) error {
+	var lastErr error
+	for i := 0; i < summarizeAttempts; i++ {
+		if err := fn(); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
 
 // Store 是记忆引擎需要的存储能力（repo.MemoryRepo 实现）。
 //
