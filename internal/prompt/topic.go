@@ -51,23 +51,11 @@ func SegmentBounds(msgs []port.HistoryMessage, anchor int) (start, end int) {
 	return start, end
 }
 
-// findQuoteAnchor 在 msgs（时间正序）里定位被引用消息的下标：
-// 先拿 RefMsgIdx 精确匹配 msg_id（官方索引与库内 msg_id 同值域时命中，零误配）；
-// 不命中再按"作者 + 内容前缀"兜底匹配。找不到返回 -1。
-func findQuoteAnchor(msgs []port.HistoryMessage, refMsgIdx, author, quoted string) int {
-	if refMsgIdx != "" {
-		for i := len(msgs) - 1; i >= 0; i-- {
-			if msgs[i].MsgID == refMsgIdx {
-				return i
-			}
-		}
-	}
-	return matchQuote(msgs, author, quoted)
-}
-
-// matchQuote 按"作者名一致（引用给出时）+ 文本互为前缀"匹配——引用文本可能被
-// 客户端截断，库里正文也可能被截断，取较短一方作前缀比对。找不到返回 -1。
-func matchQuote(msgs []port.HistoryMessage, author, quoted string) int {
+// findQuoteAnchor 在 msgs（时间正序）里按"作者名一致（引用给出时）+ 文本互为前缀"
+// 定位被引用消息的下标——引用文本可能被客户端截断，库里正文也可能被截断，取较短
+// 一方作前缀比对。官方引用索引（REFIDX_）与库内 msg_id（ROBOT1.0_）不同值域，
+// 无法按号定位，只能按内容找。找不到返回 -1。
+func findQuoteAnchor(msgs []port.HistoryMessage, author, quoted string) int {
 	qr := []rune(text.NormalizeInbound(quoted))
 	if len(qr) < quoteAnchorMinRunes {
 		return -1

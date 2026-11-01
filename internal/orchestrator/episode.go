@@ -21,6 +21,26 @@ const (
 	summarizeTimeout = 20 * time.Second
 )
 
+// summarizeAsync 异步把一段消息摘要成情景记忆：协程内先 load 材料（读库不阻塞
+// 消息主流程），再调 Episode.Summarize；失败只告警。成功日志文案由调用方给
+// （区分轮次归档/话题归档）。
+func (o *Orchestrator) summarizeAsync(ev port.Event, okMsg string, load func(ctx context.Context) ([]port.HistoryMessage, error)) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), summarizeTimeout)
+		defer cancel()
+		msgs, err := load(ctx)
+		if err != nil {
+			o.cfg.Logger.Warn("读取情景材料失败", "event_id", ev.ID, "err", err)
+			return
+		}
+		if err := o.cfg.Episode.Summarize(ctx, ev, msgs); err != nil {
+			o.cfg.Logger.Warn("生成情景记忆失败", "event_id", ev.ID, "err", err)
+		} else {
+			o.cfg.Logger.Info(okMsg, "event_id", ev.ID, "messages", len(msgs))
+		}
+	}()
+}
+
 // maybeSummarize 每 EpisodeTurns 轮异步生成一条情景记忆（失败只告警，不影响回复）。
 func (o *Orchestrator) maybeSummarize(ev port.Event) {
 	if o.cfg.Episode == nil || o.cfg.History == nil || o.cfg.EpisodeTurns <= 0 {
@@ -43,22 +63,17 @@ func (o *Orchestrator) maybeSummarize(ev port.Event) {
 	o.episodeTurns[key] = 0
 	o.episodeMu.Unlock()
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), summarizeTimeout)
-		defer cancel()
+	o.summarizeAsync(ev, "已生成情景记忆", func(ctx context.Context) ([]port.HistoryMessage, error) {
 		recent, err := o.cfg.History.RecentExchange(ctx, ev.TargetID, ev.Author.ID, episodeRecentLimit)
 		if err != nil {
-			o.cfg.Logger.Warn("读取情景对话失败", "event_id", ev.ID, "err", err)
-			return
+			return nil, err
 		}
 		// 话题窗口：只摘要当前话题段，不把跨话题的消息算进一条情景。
 		if start, _ := prompt.SegmentBounds(recent, len(recent)-1); start > 0 {
 			recent = recent[start:]
 		}
-		if err := o.cfg.Episode.Summarize(ctx, ev, recent); err != nil {
-			o.cfg.Logger.Warn("生成情景记忆失败", "event_id", ev.ID, "err", err)
-		}
-	}()
+		return recent, nil
+	})
 }
 
 // episodesText 返回要注入的最近情景记忆块（≤3 条）；没有则返回空串。
@@ -119,15 +134,9 @@ func (o *Orchestrator) maybeCloseTopic(ev port.Event) {
 	o.topicArchived[ev.TargetID] = segEnd
 	o.episodeMu.Unlock()
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), summarizeTimeout)
-		defer cancel()
-		if err := o.cfg.Episode.Summarize(ctx, ev, prev); err != nil {
-			o.cfg.Logger.Warn("话题归档生成情景记忆失败", "event_id", ev.ID, "err", err)
-		} else {
-			o.cfg.Logger.Info("话题已归档为情景记忆", "event_id", ev.ID, "messages", len(prev))
-		}
-	}()
+	o.summarizeAsync(ev, "话题已归档为情景记忆", func(context.Context) ([]port.HistoryMessage, error) {
+		return prev, nil
+	})
 
 	// 新话题开始：情景轮次计数清零，不跨话题累计。
 	key := sessionKey(ev)

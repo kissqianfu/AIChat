@@ -26,7 +26,6 @@ func FromSDK(ev *sdkevent.Event) port.Event {
 		ReceivedAt:  ev.ReceivedAt,
 		MessageType: ev.MessageType,
 		RefIdx:      ev.RefIdx,
-		RefMsgIdx:   ev.RefMsgIdx,
 		Author: port.Author{
 			ID:         ev.Sender.ID,
 			Name:       ev.Sender.Name,

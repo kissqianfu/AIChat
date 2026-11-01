@@ -52,7 +52,6 @@ func TestFromSDKStructuredFields(t *testing.T) {
 		TargetID:    "g-1",
 		MsgID:       "msg-1",
 		RefIdx:      "idx-9",
-		RefMsgIdx:   "idx-8",
 		MessageType: 103,
 		Sender:      sdkevent.Sender{ID: "m-1", Name: "小明"},
 		Mentions:    []sdkevent.Sender{{ID: "m-2", Name: "小红"}},
@@ -73,8 +72,8 @@ func TestFromSDKStructuredFields(t *testing.T) {
 	}
 	got := FromSDK(ev)
 
-	if got.MessageType != 103 || got.RefIdx != "idx-9" || got.RefMsgIdx != "idx-8" {
-		t.Fatalf("messageType/ref = %d/%q/%q", got.MessageType, got.RefIdx, got.RefMsgIdx)
+	if got.MessageType != 103 || got.RefIdx != "idx-9" {
+		t.Fatalf("messageType/ref = %d/%q", got.MessageType, got.RefIdx)
 	}
 	if len(got.Mentions) != 1 || got.Mentions[0].ID != "m-2" || got.Mentions[0].Name != "小红" {
 		t.Fatalf("mentions = %+v", got.Mentions)

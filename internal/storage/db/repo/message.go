@@ -79,7 +79,7 @@ func (r *MessageRepo) recent(ctx context.Context, targetID, senderID string, lim
 		limit = maxMessageLimit
 	}
 
-	query := `SELECT event_id, msg_id, direction, scene, target_id, sender_id, sender_name, content, created_at
+	query := `SELECT event_id, direction, scene, target_id, sender_id, sender_name, content, created_at
 		FROM message WHERE target_id = ?`
 	args := []any{targetID}
 	if senderID != "" {
@@ -99,23 +99,22 @@ func (r *MessageRepo) recent(ctx context.Context, targetID, senderID string, lim
 	messages := make([]port.HistoryMessage, 0, limit)
 	for rows.Next() {
 		var (
-			eventID, msgID, scene, target, sender, senderName sql.NullString
-			direction, content                                string
-			createdMS                                         int64
-			created                                           time.Time
+			eventID, scene, target, sender, senderName sql.NullString
+			direction, content                         string
+			createdMS                                  int64
+			created                                    time.Time
 		)
 		if postgres {
-			if err := rows.Scan(&eventID, &msgID, &direction, &scene, &target, &sender, &senderName, &content, &created); err != nil {
+			if err := rows.Scan(&eventID, &direction, &scene, &target, &sender, &senderName, &content, &created); err != nil {
 				return nil, fmt.Errorf("repo: scan message: %w", err)
 			}
 		} else {
-			if err := rows.Scan(&eventID, &msgID, &direction, &scene, &target, &sender, &senderName, &content, &createdMS); err != nil {
+			if err := rows.Scan(&eventID, &direction, &scene, &target, &sender, &senderName, &content, &createdMS); err != nil {
 				return nil, fmt.Errorf("repo: scan message: %w", err)
 			}
 			created = time.UnixMilli(createdMS)
 		}
 		messages = append(messages, port.HistoryMessage{
-			MsgID:      msgID.String,
 			SenderID:   sender.String,
 			SenderName: senderName.String,
 			Direction:  direction,

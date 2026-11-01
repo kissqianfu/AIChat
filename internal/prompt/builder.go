@@ -133,7 +133,7 @@ func (b *Builder) oldTopicBlock(ctx context.Context, ev port.Event, boundary tim
 	if err != nil || len(scan) == 0 {
 		return nil, false
 	}
-	idx := findQuoteAnchor(scan, ev.RefMsgIdx, author, quoted)
+	idx := findQuoteAnchor(scan, author, quoted)
 	if idx < 0 {
 		return nil, false
 	}

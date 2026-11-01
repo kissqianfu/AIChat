@@ -7,7 +7,6 @@ import (
 
 // HistoryMessage 是一条历史消息（上下文装配用，带发言人标签）。
 type HistoryMessage struct {
-	MsgID      string // 平台消息 id（引用恢复时与 Event.RefMsgIdx 对得上则可精确定位）
 	SenderID   string
 	SenderName string
 	Direction  string // in | out

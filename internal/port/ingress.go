@@ -123,9 +123,8 @@ type Event struct {
 	// Elements 是消息元素列表（message_type=103 时含被引用内容）。
 	Elements []Element
 	// RefIdx 是引用回复锚点：机器人回复时传回它，客户端展示"引用对方这条消息"。
+	// （用户引用消息的被引用内容走 Elements，官方 ref_msg_idx 索引不透传——见 prompt.findQuoteAnchor。）
 	RefIdx string
-	// RefMsgIdx 是本条消息所引用的消息索引（用户发引用消息时存在，读上下文用）。
-	RefMsgIdx string
 }
 
 // Ingress 是接入层契约（WS / Webhook 各自实现，主项目只留薄 adapter）。

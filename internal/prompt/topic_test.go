@@ -32,10 +32,10 @@ var (
 
 func segMsgs() []port.HistoryMessage {
 	return []port.HistoryMessage{
-		{MsgID: "M1", SenderName: "小明", Direction: "in", Content: "今天下午去爬山吗", CreatedAt: t0},
-		{MsgID: "M2", Direction: "out", Content: "去啊，几点出发", CreatedAt: t1},
-		{MsgID: "M3", SenderName: "小明", Direction: "in", Content: "晚饭吃什么", CreatedAt: t2},
-		{MsgID: "M4", Direction: "out", Content: "随便，火锅？", CreatedAt: t3},
+		{SenderName: "小明", Direction: "in", Content: "今天下午去爬山吗", CreatedAt: t0},
+		{Direction: "out", Content: "去啊，几点出发", CreatedAt: t1},
+		{SenderName: "小明", Direction: "in", Content: "晚饭吃什么", CreatedAt: t2},
+		{Direction: "out", Content: "随便，火锅？", CreatedAt: t3},
 	}
 }
 
@@ -68,29 +68,21 @@ func TestSegmentBoundsEdgeCases(t *testing.T) {
 	}
 }
 
-func TestFindQuoteAnchorByMsgID(t *testing.T) {
-	msgs := segMsgs()
-	if got := findQuoteAnchor(msgs, "M1", "", ""); got != 0 {
-		t.Fatalf("按 MsgID 定位 = %d, want 0", got)
-	}
-	// 值域不一致时精确匹配落空，落回内容匹配。
-	if got := findQuoteAnchor(msgs, "REFIDX_其他值域", "小明", "今天下午去爬山吗"); got != 0 {
-		t.Fatalf("内容兜底定位 = %d, want 0", got)
-	}
-}
-
 func TestFindQuoteAnchorByContent(t *testing.T) {
 	msgs := segMsgs()
+	if got := findQuoteAnchor(msgs, "小明", "今天下午去爬山吗"); got != 0 {
+		t.Fatalf("全文定位 = %d, want 0", got)
+	}
 	// 引用文本被客户端截断：库里是前缀的超集。
-	if got := findQuoteAnchor(msgs, "", "小明", "今天下午去爬山"); got != 0 {
+	if got := findQuoteAnchor(msgs, "小明", "今天下午去爬山"); got != 0 {
 		t.Fatalf("截断引用定位 = %d, want 0", got)
 	}
 	// 作者不符不命中（M1/M3 内容不同但若同名也不该匹配到别的）。
-	if got := findQuoteAnchor(msgs, "", "小红", "今天下午去爬山吗"); got != -1 {
+	if got := findQuoteAnchor(msgs, "小红", "今天下午去爬山吗"); got != -1 {
 		t.Fatalf("作者不符 = %d, want -1", got)
 	}
 	// 太短的引用不做匹配（误配率高）。
-	if got := findQuoteAnchor(msgs, "", "小明", "爬山"); got != -1 {
+	if got := findQuoteAnchor(msgs, "小明", "爬山"); got != -1 {
 		t.Fatalf("过短引用 = %d, want -1", got)
 	}
 }
@@ -114,7 +106,7 @@ func TestMessagesTopicCut(t *testing.T) {
 
 func TestMessagesQuoteResumesOldTopic(t *testing.T) {
 	b := New(Config{Persona: "p", History: &fakeHist{pub: segMsgs(), exchange: segMsgs()}})
-	ev := quoteEvent("M1", "小明", "今天下午去爬山吗")
+	ev := quoteEvent("小明", "今天下午去爬山吗")
 	msgs := b.Messages(context.Background(), ev, "那现在还去吗", "", "", nil)
 
 	resumed := false
@@ -134,7 +126,7 @@ func TestMessagesQuoteResumesOldTopic(t *testing.T) {
 func TestMessagesQuoteInsideTopicNoResume(t *testing.T) {
 	b := New(Config{Persona: "p", History: &fakeHist{pub: segMsgs(), exchange: segMsgs()}})
 	// 引用的是当前话题内的消息（t2 段）。
-	ev := quoteEvent("M3", "小明", "晚饭吃什么")
+	ev := quoteEvent("小明", "晚饭吃什么")
 	msgs := b.Messages(context.Background(), ev, "烧烤呢", "", "", nil)
 	for _, m := range msgs {
 		if m.Role == port.ChatRoleSystem && contains(m.Content, "旧话题恢复") {
@@ -146,7 +138,7 @@ func TestMessagesQuoteInsideTopicNoResume(t *testing.T) {
 func TestMessagesQuoteNoAnchorNoResume(t *testing.T) {
 	b := New(Config{Persona: "p", History: &fakeHist{pub: segMsgs(), exchange: segMsgs()}})
 	// 库里没有这条被引用的消息。
-	ev := quoteEvent("", "路人", "这是一条库里不存在的消息内容啊")
+	ev := quoteEvent("路人", "这是一条库里不存在的消息内容啊")
 	msgs := b.Messages(context.Background(), ev, "看这个", "", "", nil)
 	for _, m := range msgs {
 		if m.Role == port.ChatRoleSystem && contains(m.Content, "旧话题恢复") {
@@ -165,10 +157,9 @@ func groupEvent() port.Event {
 }
 
 // quoteEvent 造一条引用消息事件（message_type=103）。
-func quoteEvent(refMsgID, author, quoted string) port.Event {
+func quoteEvent(author, quoted string) port.Event {
 	ev := groupEvent()
 	ev.MessageType = 103
-	ev.RefMsgIdx = refMsgID
 	ev.Elements = []port.Element{{
 		Author: port.Author{Name: author},
 		Parts:  []port.Part{{Kind: port.PartText, Text: quoted}},
