@@ -99,16 +99,19 @@ func (w *wiring) buildToolbox(ctx context.Context) error {
 		}
 	}
 	// 画图（2026-10-31：/draw 指令移除，改 image_gen 工具，画图能力默认开、模型自行判断；
-	// config imagegen.enabled + models.imagegen 槽位（base_url 非空）齐才注册）。
+	// 2026-11-01：protocol 决定用谁家——openai 走 /images/generations，
+	// qianwen 走百炼原生 multimodal-generation）。开关仍是 imagegen.enabled。
 	if w.cfg.ImageGen.Enabled {
-		genFn := imageGenFnFor(openAIForSlot(w.reg, w.keyRepo, "imagegen"), w.imageModel, w.imageSize)
-		if genFn == nil {
-			w.logger.Warn("imagegen.enabled=true 但 models.imagegen 槽位未配置（base_url 空），画图工具未启用")
+		genFn, err := imageGenFnFor(w.reg, w.keyRepo, w.imageModel, w.imageSize)
+		if err != nil {
+			w.logger.Warn("画图工具未启用", "err", err)
 		} else {
 			taker := &drawQuotaTaker{repo: repo.NewProactiveRepo(w.store, w.clk)}
 			if err := toolbox.Register(tools.NewImageGenTool(genFn, taker, w.cfg.ImageGen.MaxPerDay, w.logger)); err != nil {
 				return fmt.Errorf("bootstrap: 注册画图工具: %w", err)
 			}
+			ref, _ := w.reg.SlotModel("imagegen")
+			w.logger.Info("画图工具已启用", "protocol", ref.Protocol, "model", w.imageModel, "size", w.imageSize)
 		}
 	}
 	return nil

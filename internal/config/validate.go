@@ -165,8 +165,12 @@ func validateModels(m *ModelsConfig, add func(string, ...any)) {
 		if s.Primary.Model == "" {
 			add("models.chat.%s.primary.model 不能为空", name)
 		}
-		if s.Primary.BaseURL == "" {
-			add("models.chat.%s.primary.base_url 不能为空", name)
+		// base_url 与 protocol 至少要有一个（2026-11-01）：写了 protocol 就可以省
+		// base_url，由该家的默认端点兜底；两个都空则谁也构造不出来。
+		// 这里原来一刀切要求 base_url 非空，与 registry / adapter 的「protocol 默认端点」
+		// 冲突——配置过了、registry 也过了，但用户按注释省掉 base_url 就起不来。
+		if s.Primary.BaseURL == "" && s.Primary.Protocol == "" {
+			add("models.chat.%s.primary 的 base_url 与 protocol 不能同时为空（写 protocol 即可用该家默认端点）", name)
 		}
 	}
 	if len(m.Chat) == 0 {
@@ -186,10 +190,59 @@ func validateModels(m *ModelsConfig, add func(string, ...any)) {
 		checkChat(name, slot)
 	}
 	if m.Vision != nil {
-		if m.Vision.Primary.Model == "" || m.Vision.Primary.BaseURL == "" {
-			add("models.vision.primary 的 model/base_url 需非空（不用视觉可整段删除）")
+		if m.Vision.Primary.Model == "" {
+			add("models.vision.primary.model 不能为空（不用视觉可整段删除）")
+		}
+		if m.Vision.Primary.BaseURL == "" && m.Vision.Primary.Protocol == "" {
+			add("models.vision.primary 的 base_url 与 protocol 不能同时为空")
 		}
 	}
+
+	// base_url 必须是 http(s) 地址（2026-11-01 补）。
+	//
+	// 线上真踩过：把**厂商名**写进了 base_url（base_url: qianwen），想表达"用千问"。
+	// 结果请求发到 "qianwen/api/v1/..."，报 unsupported protocol scheme，看起来像
+	// 接口挂了。这两个字段是分开的：protocol 说连谁家，base_url 说连哪个地址。
+	for name, slot := range m.slots() {
+		refs := append([]ModelRef{slot.Primary}, slot.Fallbacks...)
+		for i, ref := range refs {
+			if ref.BaseURL == "" {
+				continue // 空 = 关闭该能力，或用 protocol 默认端点
+			}
+			where := fmt.Sprintf("models.%s.primary.base_url", name)
+			if i > 0 {
+				where = fmt.Sprintf("models.%s.fallbacks[%d].base_url", name, i-1)
+			}
+			if !strings.HasPrefix(ref.BaseURL, "http://") && !strings.HasPrefix(ref.BaseURL, "https://") {
+				add("%s 必须以 http:// 或 https:// 开头，当前 %q（选厂商用 protocol，base_url 只写端点地址）",
+					where, ref.BaseURL)
+			}
+		}
+	}
+}
+
+// slots 汇总所有已配置槽位（chat 是 map，其余是单槽位），供统一校验。
+func (m *ModelsConfig) slots() map[string]ModelSlot {
+	out := make(map[string]ModelSlot, len(m.Chat)+5)
+	for name, slot := range m.Chat {
+		out["chat."+name] = slot
+	}
+	if m.Vision != nil {
+		out["vision"] = *m.Vision
+	}
+	if m.Asr != nil {
+		out["asr"] = *m.Asr
+	}
+	if m.TTS != nil {
+		out["tts"] = *m.TTS
+	}
+	if m.ImageGen != nil {
+		out["imagegen"] = *m.ImageGen
+	}
+	if m.Search != nil {
+		out["search"] = *m.Search
+	}
+	return out
 }
 
 func validateSticker(c *StickerConfig, add func(string, ...any)) {

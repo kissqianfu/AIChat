@@ -73,7 +73,10 @@ func Valid(slot, p string) bool {
 	case OpenAI:
 		return IsChat(slot) || slot == "asr" || slot == "imagegen"
 	case Qianwen:
-		return IsChat(slot) || slot == "asr"
+		// 千问的 ASR 与画图都在百炼上，但**不是同一套接口**：ASR 走
+		// /compatible-mode/v1（OpenAI 兼容），画图走原生 multimodal-generation
+		// （/compatible-mode/v1/images/generations 实测 404）。
+		return IsChat(slot) || slot == "asr" || slot == "imagegen"
 	case ElevenLabs, Breeze:
 		return slot == "tts"
 	default:
@@ -91,7 +94,7 @@ func Allowed(slot string) string {
 	case slot == "tts":
 		return "elevenlabs/breeze"
 	case slot == "imagegen":
-		return "openai"
+		return "openai/qianwen"
 	case slot == "search":
 		return "deepseek"
 	default:

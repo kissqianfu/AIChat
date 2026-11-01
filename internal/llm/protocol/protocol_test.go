@@ -39,7 +39,9 @@ func TestValid(t *testing.T) {
 		{"tts", Breeze, true},
 		{"tts", DeepSeek, false},
 		{"imagegen", OpenAI, true},
+		{"imagegen", Qianwen, true}, // 千问画图走原生 multimodal-generation
 		{"imagegen", DeepSeek, false},
+		{"imagegen", ElevenLabs, false},
 		{"search", DeepSeek, true},
 		{"search", OpenAI, false},
 		{"chat.fast", "some-vendor", false},

@@ -100,10 +100,10 @@ balance:
 # protocol 是「谁家的模型」，同时决定两件事（2026-11-01）：
 #   1. 用哪家客户端/端点：deepseek | openai | qianwen 三家对话接口都是 OpenAI 兼容，
 #      共用一套实现；base_url 留空 = 用该 protocol 的官方默认端点。
-#      asr: openai(默认)/qianwen；tts: elevenlabs(默认)/breeze；imagegen: openai；search: deepseek。
+#      asr: openai(默认)/qianwen；tts: elevenlabs(默认)/breeze；imagegen: openai(默认)/qianwen；search: deepseek。
 #   2. 用哪张价目表算钱：deepseek 的价目在 internal/billing/deepseek（峰谷两档 ×2、
 #      搜索/抓取 5 元/千次）。没登记计费规则的 protocol 会记 unpriced 指标，不会静默按 0 元。
-# asr/imagegen/tts 的 base_url 留空 = 该能力关闭。${ENV} 会展开。
+# 对话/视觉写了 protocol 可省 base_url（用该家默认端点）；asr/imagegen/tts 两者都空 = 该能力关闭。${ENV} 会展开。
 # 热加载：改本段后 1s 内生效（失败保留旧版），/reload 也可手动触发（保留 5 层快照可回滚）。
 models:
   # 对话槽位（复杂度判别与插话打分也用 chat.fast）
@@ -127,8 +127,11 @@ models:
   tts:
     primary: { protocol: elevenlabs, base_url: "", model: eleven_turbo_v2_5, voice: "", api_key_name: elevenlabs }
   # 图像生成 base_url 留空 = 该能力关闭
+  # 画图：protocol 选接口形态。qianwen 走百炼原生 multimodal-generation
+  # （/compatible-mode/v1/images/generations 是 404），model 必须是 qwen-image-2.0 这类真实名字，
+  # size 写 1024x1024 即可（会自动换成百炼的 1024*1024）。
   imagegen:
-    primary: { protocol: openai, base_url: "", model: dall-e-3, size: 1024x1024, api_key_name: openai }
+    primary: { protocol: qianwen, base_url: https://dashscope.aliyuncs.com, model: qwen-image-2.0, size: 1024x1024, api_key_name: qianwen }
   # 联网搜索（web_search）/抓取（web_fetch）：无需 model 名。
   # protocol: deepseek = web_fetch 走官方 Fetch 接口（服务端渲染 + Markdown，¥5/千次，
   # 失败自动回退直连），搜索/抓取按次计费也按 deepseek 价目算。

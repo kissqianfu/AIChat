@@ -218,3 +218,30 @@ func TestValidateBalanceAccounts(t *testing.T) {
 		}
 	}
 }
+
+// base_url 是**端点地址**，不是厂商名。线上真踩过：写 base_url: qianwen 想表达
+// "用千问"，结果请求发到 "qianwen/api/v1/..."，报 unsupported protocol scheme。
+// 同时锁住另一半：写了 protocol 就可以省 base_url（用该家默认端点）。
+func TestValidateModelsBaseURL(t *testing.T) {
+	bad := validConfig()
+	bad.Models.ImageGen = &ModelSlot{Primary: ModelRef{
+		BaseURL: "qianwen", Model: "qwen-image-2.0", APIKeyName: "qianwen",
+	}}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "http://") {
+		t.Fatalf("base_url 写成厂商名应被拒，实得 %v", err)
+	}
+
+	ok := validConfig()
+	ok.Models.Chat["fast"] = ModelSlot{Primary: ModelRef{
+		Protocol: "qianwen", Model: "qwen-plus", APIKeyName: "qianwen",
+	}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("写了 protocol 时省略 base_url 应合法，实得 %v", err)
+	}
+
+	empty := validConfig()
+	empty.Models.Chat["fast"] = ModelSlot{Primary: ModelRef{Model: "m", APIKeyName: "k"}}
+	if err := empty.Validate(); err == nil || !strings.Contains(err.Error(), "不能同时为空") {
+		t.Fatalf("base_url 与 protocol 都空应报错，实得 %v", err)
+	}
+}

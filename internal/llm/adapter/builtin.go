@@ -5,6 +5,9 @@
 package adapter
 
 import (
+	"context"
+	"errors"
+
 	"github.com/kissqianfu/aichat/internal/llm/deepseek"
 	"github.com/kissqianfu/aichat/internal/llm/openai"
 	"github.com/kissqianfu/aichat/internal/llm/protocol"
@@ -49,6 +52,36 @@ func init() {
 				HTTP:    p.HTTP,
 				Logger:  p.Logger,
 			})
+		},
+	})
+
+	// 画图（imagegen 槽位）：只有这两家。deepseek 没有画图能力，故意不注册——
+	// 配错时会直接报"协议 xx 没有画图实现（已注册：openai/qianwen）"，
+	// 比发到一个不存在的接口再吃 404 好排查。
+	RegisterImage(protocol.OpenAI, ImageProvider{
+		DefaultBaseURL: openai.DefaultImageBaseURL,
+		Build: func(p ImageParams) (ImageFunc, error) {
+			client := openai.New(openai.Config{BaseURL: p.BaseURL, APIKey: p.APIKey})
+			if client == nil {
+				return nil, errors.New("adapter: openai 画图端点为空")
+			}
+			model, size := p.Model, p.Size
+			return func(ctx context.Context, prompt string) ([]byte, string, error) {
+				return client.GenerateImage(ctx, model, prompt, size)
+			}, nil
+		},
+	})
+
+	RegisterImage(protocol.Qianwen, ImageProvider{
+		DefaultBaseURL: qianwen.DefaultImageBaseURL,
+		Build: func(p ImageParams) (ImageFunc, error) {
+			return qianwen.NewImageGen(qianwen.ImageConfig{
+				APIKey:  p.APIKey,
+				BaseURL: p.BaseURL,
+				Model:   p.Model,
+				Size:    p.Size,
+				HTTP:    p.HTTP,
+			}), nil
 		},
 	})
 }

@@ -110,3 +110,25 @@ func (stubModel) Chat(context.Context, port.ChatRequest) (*port.ChatResponse, er
 func (stubModel) Stream(context.Context, port.ChatRequest) (port.ChatStream, error) {
 	return nil, nil
 }
+
+// 画图分派：openai 与 qianwen 已注册，deepseek 故意没有——它确实不提供画图。
+// 注册表里有错会表现为「配置写对了却报没实现」，所以两边都断言。
+func TestNewImageDispatch(t *testing.T) {
+	for _, proto := range []string{protocol.OpenAI, protocol.Qianwen} {
+		fn, err := NewImage(ImageParams{
+			Protocol: proto,
+			APIKey:   func(context.Context) (string, error) { return "k", nil },
+			Model:    "m",
+		})
+		if err != nil || fn == nil {
+			t.Fatalf("NewImage(%q) 应构造成功，实得 fn=%v err=%v", proto, fn, err)
+		}
+	}
+	if got := DefaultImageBaseURL(protocol.DeepSeek); got != "" {
+		t.Fatalf("deepseek 不该有画图默认端点，实得 %q", got)
+	}
+	if _, err := NewImage(ImageParams{Protocol: protocol.DeepSeek}); err == nil ||
+		!strings.Contains(err.Error(), "没有画图实现") {
+		t.Fatalf("deepseek 画图应报没有实现，实得 %v", err)
+	}
+}

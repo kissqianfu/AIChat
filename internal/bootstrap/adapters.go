@@ -3,12 +3,14 @@ package bootstrap
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
 	"github.com/kissqianfu/aichat/internal/admin"
 	"github.com/kissqianfu/aichat/internal/limits"
+	"github.com/kissqianfu/aichat/internal/llm/adapter"
 	"github.com/kissqianfu/aichat/internal/llm/openai"
 	"github.com/kissqianfu/aichat/internal/llm/registry"
 	"github.com/kissqianfu/aichat/internal/persona"
@@ -24,8 +26,9 @@ type guardAdapter struct {
 	guard *limits.Guard
 }
 
-// openAIForSlot 为 OpenAI 兼容能力槽位（asr/imagegen）构造客户端；
+// openAIForSlot 为 OpenAI 兼容能力槽位（asr）构造客户端；
 // 槽位缺失或 base_url 为空（该能力关闭）返回 nil。
+// imagegen 自 2026-11-01 起改由 adapter.NewImage 按 protocol 分派，不再走这里。
 func openAIForSlot(reg *registry.Registry, keys keyGetter, slot string) *openai.Client {
 	if reg == nil || keys == nil {
 		return nil
@@ -93,15 +96,43 @@ func llmCostMicros(prompt, completion int) int64 {
 	return int64(prompt)*14/100 + int64(completion)*28/100
 }
 
-// imageGenFn 只有 provider + imagegen 槽位都配置时才返回生成闭包（2026-10-31：
-// /draw 指令移除，画图改走 image_gen 工具，由模型在对话中自行判断调用）。
-func imageGenFnFor(provider *openai.Client, model, size string) func(context.Context, string) ([]byte, string, error) {
-	if provider == nil || model == "" {
-		return nil
+// imageGenFnFor 按 models.imagegen 槽位构造画图闭包：protocol 决定用谁家。
+//
+// 2026-11-01 起画图也走 protocol 分派（与对话侧对称）：openai 走 /images/generations
+// 拿 b64，qianwen 走百炼原生 multimodal-generation 拿临时 URL 再当场下载。
+//
+// base_url 留空时用该协议的默认端点——但只在**显式写了 protocol** 时才这么兜底：
+// 两个都空等于"这个能力没配"，按历史语义视为关闭，而不是拿 openai 默认端点去试。
+func imageGenFnFor(reg *registry.Registry, keys keyGetter, model, size string) (tools.ImageGenFn, error) {
+	if reg == nil || keys == nil {
+		return nil, errors.New("registry 或密钥仓库为空")
 	}
-	return func(ctx context.Context, prompt string) ([]byte, string, error) {
-		return provider.GenerateImage(ctx, model, prompt, size)
+	ref, ok := reg.SlotModel("imagegen")
+	if !ok {
+		return nil, errors.New("config.yaml 没有 models.imagegen 槽位")
 	}
+	if strings.TrimSpace(model) == "" {
+		return nil, errors.New("models.imagegen 缺 model 名")
+	}
+	if strings.TrimSpace(ref.APIKeyName) == "" {
+		return nil, errors.New("models.imagegen 缺 api_key_name")
+	}
+	if strings.TrimSpace(ref.BaseURL) == "" && strings.TrimSpace(ref.Protocol) == "" {
+		return nil, errors.New("models.imagegen 既没有 base_url 也没有 protocol（按未配置处理）")
+	}
+	fn, err := adapter.NewImage(adapter.ImageParams{
+		Protocol: ref.Protocol,
+		BaseURL:  ref.BaseURL,
+		Model:    model,
+		Size:     size,
+		APIKey:   func(ctx context.Context) (string, error) { return keys.Key(ctx, ref.APIKeyName) },
+	})
+	if err != nil {
+		return nil, err
+	}
+	// adapter.ImageFunc 与 tools.ImageGenFn 签名相同但分属两层，显式转换，
+	// 免得以后任一侧改签名时被静默的隐式兼容掩盖。
+	return tools.ImageGenFn(fn), nil
 }
 
 // drawQuotaTaker 把 proactive_quota 的日配额接成工具侧 QuotaTaker。

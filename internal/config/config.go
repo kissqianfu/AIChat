@@ -146,7 +146,8 @@ type ModelRef struct {
 	//                    base_url 与计费口径；
 	//   asr              openai（默认）| qianwen（chat/completions + input_audio）；
 	//   tts              elevenlabs（默认，pcm_24000 → silk）| breeze（同形，mp3 直传）；
-	//   imagegen         openai（默认）；
+	//   imagegen         openai（默认，/images/generations）| qianwen（百炼原生
+	//                    multimodal-generation；注意它**不在** compatible-mode 下）；
 	//   search           deepseek（默认，官方 tools/search + tools/fetch）。
 	//
 	// 它同时决定「用谁家客户端」（internal/llm/adapter）与「按哪张价目表算钱」

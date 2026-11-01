@@ -103,10 +103,15 @@ balance:
 
 
 # 模型槽位：每个引用自带 protocol / base_url / api_key_name（→ api_key 表）。
-#   protocol 决定「用谁家的模型」：对话与视觉 = deepseek（默认）| openai | qianwen；
-#     base_url 可省略（按 protocol 取官方默认端点；千问会自动补 /compatible-mode/v1）。
-#     换千问：protocol: qianwen + api_key_name 指向百炼 key，model 写 qwen-plus 之类。
-#   能力槽位的 base_url 留空 = 该能力关闭。
+#   protocol 决定「用谁家的模型」，base_url 是「连哪个地址」，两者不能混：
+#     对话/视觉  deepseek（默认）| openai | qianwen
+#     asr        openai（默认）| qianwen
+#     tts        elevenlabs（默认）| breeze
+#     imagegen   openai（默认，/images/generations）| qianwen（百炼原生接口）
+#     search     deepseek
+#   对话/视觉：写了 protocol 就可以省 base_url（用该家默认端点；千问补 /compatible-mode/v1）；
+#     两个都空会启动报错。**只有模型名不校验**——写错的 model 要到调用时才暴露。
+#   能力槽位（asr/tts/imagegen）：base_url 与 protocol 都空 = 该能力关闭。
 models:
   chat:
     # 日常闲聊，默认槽位（必填）。protocol 省略 = deepseek。
@@ -124,7 +129,11 @@ models:
   # 语音合成：base_url 留空 = 关闭；protocol: elevenlabs（默认，pcm→silk）| breeze（mp3 直传）
   tts:
     primary: { base_url: https://api.breeze.blue/v1, model: breeze-tts-2, voice: voc_p36dbdewwvae, api_key_name: breezeblue, protocol: breeze }
-  # 图像生成：base_url 留空 = 关闭；还需下面 imagegen.enabled 打开
+  # 图像生成：还需下面 imagegen.enabled 打开。protocol 决定接口形态——
+  #   qianwen：model 写 qwen-image-2.0（不是 Qwen-Image-3.0 之类），base_url 可写
+  #            https://dashscope.aliyuncs.com（裸域名即可，会补原生路径）；出图默认 1024*1024
+  #   openai ：model 写 dall-e-3 / gpt-image-1
+  # size 用 1024x1024 写法即可，千问侧会自动换成 1024*1024。
   imagegen:
     primary: { base_url: "", model: dall-e-3, size: 1024x1024, api_key_name: openai }
   # 联网搜索/抓取端点：base_url 留空 = 默认 api.deepseek.com + 密钥 deepseek

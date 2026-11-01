@@ -19,6 +19,12 @@ import (
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 )
 
+// DefaultImageBaseURL 是 OpenAI 图像生成端点前缀（/images/generations 拼在它后面）。
+//
+// 与对话的 DefaultChatBaseURL 值相同但语义分开：哪天图像单独换域名或走代理，
+// 改这里不会顺手动到对话链路。
+const DefaultImageBaseURL = "https://api.openai.com/v1"
+
 // Config 是 provider 配置。
 type Config struct {
 	BaseURL string
