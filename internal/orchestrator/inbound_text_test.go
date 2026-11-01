@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -24,42 +25,11 @@ func (f *fakeReplyCache) Lookup(context.Context, port.Event, string) (string, bo
 
 func (f *fakeReplyCache) Store(context.Context, port.Event, string, string) { f.stores++ }
 
-func TestNormalizeInboundFaceMarkup(t *testing.T) {
-	// 表情标签换成占位，前缀文字保留。
-	if got := normalizeInbound(faceOnly + "看这个"); got != placeholderFace+"看这个" {
-		t.Fatalf("normalizeInbound() = %q", got)
-	}
-	// 纯表情归一化后只剩占位，不再带平台 markup。
-	if got := normalizeInbound(faceOnly); got != placeholderFace {
-		t.Fatalf("normalizeInbound(faceOnly) = %q", got)
-	}
-	if got := normalizeInbound(""); got != "" {
-		t.Fatalf("normalizeInbound(\"\") = %q", got)
-	}
-}
-
-func TestSubstantiveText(t *testing.T) {
-	cases := map[string]bool{
-		"这语义缓存真不好用":            true,
-		"在吗":                   true,
-		"ok":                   true,
-		"11":                   true,
-		placeholderFace:        false,
-		placeholderNoText:      false,
-		placeholderFace + "  ": false,
-		"？。！":                  false,
-		"":                     false,
-	}
-	for in, want := range cases {
-		if got := substantiveText(in); got != want {
-			t.Fatalf("substantiveText(%q) = %v, want %v", in, got, want)
-		}
-	}
-}
-
+// TestFirstTextNormalizesMarkup 锁住 orchestrator 取正文时已清掉平台 markup。
+// 归一化本体在 internal/platform/text，这里只验接线。
 func TestFirstTextNormalizesMarkup(t *testing.T) {
 	parts := []port.Part{{Kind: port.PartText, Text: " " + faceOnly + "看这个 "}}
-	if got := firstText(parts); got != placeholderFace+"看这个" {
+	if got := firstText(parts); got != text.PlaceholderFace+"看这个" {
 		t.Fatalf("firstText() = %q", got)
 	}
 }

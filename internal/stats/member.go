@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kissqianfu/aichat/internal/platform/clock"
+	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -251,7 +252,11 @@ func plainText(parts []port.Part) string {
 	var b strings.Builder
 	for _, p := range parts {
 		if p.Kind == port.PartText {
-			b.WriteString(p.Text)
+			// markup 不清掉会把"<faceType=6,faceId=…>"算成三十几个字；
+			// 纯表情归一化后只剩占位，不计字数。
+			if t := text.NormalizeInbound(p.Text); t != text.PlaceholderFace {
+				b.WriteString(t)
+			}
 		}
 	}
 	return b.String()

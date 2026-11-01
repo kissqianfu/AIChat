@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 
+	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 	"github.com/kissqianfu/aichat/internal/safety"
 )
@@ -84,7 +85,7 @@ func toChat(history []port.HistoryMessage, withName bool) []port.ChatMessage {
 		if m.Direction != "out" {
 			// 历史里存量的是归一化之前的正文（带 <faceType=...> 标签），
 			// 渲染时补一刀，否则模型会对着这串字节继续编画面。
-			content = normalizeInbound(content)
+			content = text.NormalizeInbound(content)
 		}
 		if withName && m.Direction != "out" {
 			content = safety.WrapUntrusted("群消息", speakerLabel(m.SenderName)+content)

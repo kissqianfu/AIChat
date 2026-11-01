@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -101,11 +102,11 @@ func isKeyCommand(text string) bool {
 	return lower == "key" || strings.HasPrefix(lower, "key ")
 }
 
-// firstText 取第一段文本。
+// firstText 取第一段文本（归一化在 platform/text，与 orchestrator 同源）。
 func firstText(parts []port.Part) string {
 	for _, p := range parts {
 		if p.Kind == port.PartText {
-			return p.Text
+			return text.NormalizeInbound(p.Text)
 		}
 	}
 	return ""

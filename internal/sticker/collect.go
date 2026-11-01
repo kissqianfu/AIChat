@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kissqianfu/aichat/internal/platform/clock"
+	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -133,7 +134,9 @@ func captionOf(ev port.Event) string {
 	var b strings.Builder
 	for _, part := range ev.Parts {
 		if part.Kind == port.PartText {
-			b.WriteString(part.Text)
+			if t := text.NormalizeInbound(part.Text); t != text.PlaceholderFace {
+				b.WriteString(t)
+			}
 		}
 	}
 	return strings.TrimSpace(b.String())

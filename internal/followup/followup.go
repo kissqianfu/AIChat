@@ -22,6 +22,7 @@ import (
 
 	"github.com/kissqianfu/aichat/internal/orchestrator"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
+	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 	"github.com/kissqianfu/aichat/internal/safety"
 )
@@ -131,9 +132,9 @@ func (f *Followup) Schedule(ev port.Event, reply string) {
 	if f == nil || ev.MsgID == "" || strings.TrimSpace(reply) == "" {
 		return
 	}
-	userText := strings.TrimSpace(firstText(ev.Parts))
-	if userText == "" {
-		return // 对图片/语音等非文本消息不做补一句
+	userText := firstText(ev.Parts) // 已归一化（platform/text）
+	if !text.HasSubstance(userText) {
+		return // 图片/语音/纯表情没什么可接的：纯表情在正文里只剩一句占位
 	}
 	f.mu.Lock()
 	a := f.act[sessionKey(ev.Scene, ev.TargetID)]
@@ -275,11 +276,11 @@ func dialogueOf(userText, reply string) string {
 	return "对方说：" + userText + "\n机器人回了：" + reply
 }
 
-// firstText 取第一段文本（与 orchestrator.firstText 同义，避免反向依赖）。
+// firstText 取第一段文本（归一化与 orchestrator 同源：platform/text，避免反向依赖）。
 func firstText(parts []port.Part) string {
 	for _, p := range parts {
 		if p.Kind == port.PartText {
-			return p.Text
+			return text.NormalizeInbound(p.Text)
 		}
 	}
 	return ""

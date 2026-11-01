@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -24,7 +25,7 @@ type OwnerLister interface {
 func FirstText(ev port.Event) string {
 	for _, p := range ev.Parts {
 		if p.Kind == port.PartText {
-			return trimSpaceFull(p.Text)
+			return trimSpaceFull(text.NormalizeInbound(p.Text))
 		}
 	}
 	return ""
