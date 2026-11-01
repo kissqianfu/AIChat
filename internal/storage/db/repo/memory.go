@@ -164,7 +164,7 @@ func (r *MemoryRepo) Recall(ctx context.Context, q port.RecallQuery) ([]port.Mem
 		return nil, fmt.Errorf("repo: recall memory: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	candidates, err := scanRecallRows(rows, r.store.Dialect().Name() == "postgres", q, r.clk.Now())
+	candidates, err := scanRecallRows(rows, r.isPostgres(), q, r.clk.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -356,32 +356,15 @@ func bigramSet(s string) map[string]struct{} {
 	return out
 }
 
+// isPostgres 报告当前方言是否为 PostgreSQL（时间戳读取方式不同）。
+func (r *MemoryRepo) isPostgres() bool { return r.store.Dialect().Name() == "postgres" }
+
 // ListTop 取某 scope/owner 的高重要度记忆（长期画像用）。
 func (r *MemoryRepo) ListTop(ctx context.Context, scope port.Scope, ownerID string, limit int) ([]port.MemoryItem, error) {
 	if limit <= 0 {
 		limit = 8
 	}
-	query := r.store.Dialect().Rebind(`SELECT id, kind, content, importance, last_access_at
-		FROM memory_item WHERE scope = ? AND owner_id = ? AND status = 'active' AND invalid_at IS NULL
-		ORDER BY importance DESC, last_access_at DESC LIMIT ?`)
-	rows, err := r.store.Reader().QueryContext(ctx, query, string(scope), ownerID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("repo: list top memory: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	postgres := r.store.Dialect().Name() == "postgres"
-	var out []port.MemoryItem
-	for rows.Next() {
-		var item port.MemoryItem
-		dst, at := timeDst(postgres)
-		if err := rows.Scan(&item.ID, &item.Kind, &item.Content, &item.Importance, dst); err != nil {
-			return nil, fmt.Errorf("repo: scan top memory: %w", err)
-		}
-		item.LastAccess = at()
-		item.Scope = scope
-		out = append(out, item)
-	}
-	return out, rows.Err()
+	return r.listRanked(ctx, scope, ownerID, limit, "list top memory")
 }
 
 // ListActive 列出某 scope/owner 的记忆（管理指令用）。
@@ -389,21 +372,26 @@ func (r *MemoryRepo) ListActive(ctx context.Context, scope port.Scope, ownerID s
 	if limit <= 0 {
 		limit = 10
 	}
+	return r.listRanked(ctx, scope, ownerID, limit, "list memory")
+}
+
+// listRanked 是 ListTop / ListActive 的公共实现：按重要度取活跃记忆，
+// op 用于区分错误日志里的调用方。
+func (r *MemoryRepo) listRanked(ctx context.Context, scope port.Scope, ownerID string, limit int, op string) ([]port.MemoryItem, error) {
 	query := r.store.Dialect().Rebind(`SELECT id, kind, content, importance, last_access_at
 		FROM memory_item WHERE scope = ? AND owner_id = ? AND status = 'active' AND invalid_at IS NULL
 		ORDER BY importance DESC, last_access_at DESC LIMIT ?`)
 	rows, err := r.store.Reader().QueryContext(ctx, query, string(scope), ownerID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("repo: list memory: %w", err)
+		return nil, fmt.Errorf("repo: %s: %w", op, err)
 	}
 	defer func() { _ = rows.Close() }()
-	postgres := r.store.Dialect().Name() == "postgres"
+	dst, at := timeDst(r.isPostgres())
 	var out []port.MemoryItem
 	for rows.Next() {
 		var item port.MemoryItem
-		dst, at := timeDst(postgres)
 		if err := rows.Scan(&item.ID, &item.Kind, &item.Content, &item.Importance, dst); err != nil {
-			return nil, fmt.Errorf("repo: scan memory list: %w", err)
+			return nil, fmt.Errorf("repo: scan %s: %w", op, err)
 		}
 		item.LastAccess = at()
 		item.Scope = scope
@@ -411,7 +399,7 @@ func (r *MemoryRepo) ListActive(ctx context.Context, scope port.Scope, ownerID s
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("repo: iterate memory list: %w", err)
+		return nil, fmt.Errorf("repo: iterate %s: %w", op, err)
 	}
 	return out, nil
 }
@@ -431,7 +419,7 @@ func (r *MemoryRepo) DueReviews(ctx context.Context, now time.Time, limit int) (
 	}
 	defer func() { _ = rows.Close() }()
 	var out []port.MemoryItem
-	postgres := r.store.Dialect().Name() == "postgres"
+	postgres := r.isPostgres()
 	for rows.Next() {
 		var item port.MemoryItem
 		var scope string
@@ -460,6 +448,19 @@ func (r *MemoryRepo) ApplyReview(ctx context.Context, id int64, stability, impor
 	return nil
 }
 
+// inArgs 拼 "id IN (...)" 的占位符串与参数：placeholders 返回 "?,?,..."，
+// args 返回 prefix 各项后跟全部 id（配合 Rebind 之前的手写 SQL 片段拼接）。
+func inArgs(ids []int64, prefix ...any) (placeholders string, args []any) {
+	parts := make([]string, len(ids))
+	args = make([]any, 0, len(ids)+len(prefix))
+	args = append(args, prefix...)
+	for i, id := range ids {
+		parts[i] = "?"
+		args = append(args, id)
+	}
+	return strings.Join(parts, ","), args
+}
+
 // Touch 更新访问计数与最近访问时间。
 func (r *MemoryRepo) Touch(ctx context.Context, ids []int64, at time.Time) error {
 	if len(ids) == 0 {
@@ -469,16 +470,10 @@ func (r *MemoryRepo) Touch(ctx context.Context, ids []int64, at time.Time) error
 	if now.IsZero() {
 		now = r.clk.Now()
 	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, stamp(r.store, now))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args = append(args, id)
-	}
+	in, args := inArgs(ids, stamp(r.store, now))
 	query := r.store.Dialect().Rebind(`UPDATE memory_item
 		SET last_access_at = ?, access_count = access_count + 1
-		WHERE id IN (` + strings.Join(placeholders, ",") + `)`)
+		WHERE id IN (` + in + `)`)
 	if _, err := r.store.Writer().ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("repo: touch memory: %w", err)
 	}
@@ -503,7 +498,7 @@ func (r *MemoryRepo) Consolidate(ctx context.Context, now time.Time, rArchive, i
 	if importanceArchive <= 0 {
 		importanceArchive = 0.55
 	}
-	postgres := r.store.Dialect().Name() == "postgres"
+	postgres := r.isPostgres()
 	query := r.store.Dialect().Rebind(`SELECT id, last_access_at, stability, importance FROM memory_item
 		WHERE status = 'active' AND invalid_at IS NULL ORDER BY importance ASC LIMIT ?`)
 	rows, err := r.store.Reader().QueryContext(ctx, query, consolidationBatch)
@@ -535,15 +530,9 @@ func (r *MemoryRepo) Consolidate(ctx context.Context, now time.Time, rArchive, i
 
 	archived := 0
 	if len(archiveIDs) > 0 {
-		placeholders := make([]string, len(archiveIDs))
-		args := make([]any, 0, len(archiveIDs)+1)
-		args = append(args, stamp(r.store, now))
-		for i, id := range archiveIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
+		in, args := inArgs(archiveIDs, stamp(r.store, now))
 		update := r.store.Dialect().Rebind(`UPDATE memory_item SET status = 'archived', updated_at = ?
-			WHERE id IN (` + strings.Join(placeholders, ",") + `)`)
+			WHERE id IN (` + in + `)`)
 		res, err := r.store.Writer().ExecContext(ctx, update, args...)
 		if err != nil {
 			return 0, 0, fmt.Errorf("repo: archive memory: %w", err)
@@ -569,15 +558,9 @@ func (r *MemoryRepo) Forget(ctx context.Context, scope port.Scope, ownerID strin
 		return nil
 	}
 	now := r.clk.Now()
-	placeholders := make([]string, len(ids))
-	args := make([]any, 0, len(ids)+3)
-	args = append(args, stamp(r.store, now), string(scope), ownerID)
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args = append(args, id)
-	}
+	in, args := inArgs(ids, stamp(r.store, now), string(scope), ownerID)
 	query := r.store.Dialect().Rebind(`UPDATE memory_item SET status = 'deleted', updated_at = ?
-		WHERE scope = ? AND owner_id = ? AND id IN (` + strings.Join(placeholders, ",") + `)`)
+		WHERE scope = ? AND owner_id = ? AND id IN (` + in + `)`)
 	if _, err := r.store.Writer().ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("repo: forget memory: %w", err)
 	}
