@@ -35,3 +35,8 @@ config.local.yaml
 /deploy/
 /scripts/
 /test/
+
+# go.work 是本机把 QQ-SDK 的 sibling 目录接进构建用的，只对本机成立。
+# CI 与别人 clone 下来的构建走 go.mod 里的 tag（v0.1.0），两边同源。
+/go.work
+/go.work.sum
