@@ -67,6 +67,12 @@ var (
 		Name: "aichat_tool_cache_hits_total",
 		Help: "工具结果缓存命中数",
 	})
+	// 档位禁用工具时，模型仍会走正规通道发起调用，由编排层拦成"不可用"回执。
+	// 这个计数等于"禁用档里模型有多想用工具"，用来判断档位/人设是不是该调。
+	toolBlockedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_tool_blocked_total",
+		Help: "工具被档位拦下次数（按工具名）",
+	}, []string{"tool"})
 	interjectSkipTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "aichat_interject_skip_total",
 		Help: "模型 [SKIP] 自决沉默次数",
@@ -152,6 +158,9 @@ func CountToolError(name string) { toolErrorsTotal.WithLabelValues(name).Inc() }
 
 // CountToolCacheHit 计数工具结果缓存命中。
 func CountToolCacheHit() { toolCacheHits.Inc() }
+
+// CountToolBlocked 计数工具被档位拦下（禁用档里模型仍想用）。
+func CountToolBlocked(name string) { toolBlockedTotal.WithLabelValues(name).Inc() }
 
 // CountDropped 计数一条未获回复的消息（reason 见 labels.go）。
 func CountDropped(reason DropReason) { droppedTotal.WithLabelValues(string(reason)).Inc() }

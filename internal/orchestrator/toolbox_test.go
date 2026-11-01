@@ -7,7 +7,13 @@ import (
 	"testing"
 
 	"github.com/kissqianfu/aichat/internal/port"
+	"github.com/kissqianfu/aichat/internal/schedule"
 )
+
+// noToolsPolicy 是"档位禁用工具"的策略（夜间档）。
+func noToolsPolicy(context.Context, port.Event) (schedule.Policy, error) {
+	return schedule.Policy{Caps: schedule.Caps{Tools: false, Memory: true, MaxReplyRunes: 300}}, nil
+}
 
 // fakeToolbox 记录工具调用。
 type fakeToolbox struct {
@@ -222,5 +228,76 @@ func TestToolMediaAppendedAsOutbound(t *testing.T) {
 	}
 	if outs[0].Seq != 1 || outs[1].Seq != 2 || outs[1].Anchor.MsgID != "msg-1" {
 		t.Fatalf("seq/anchor = %d/%d/%+v", outs[0].Seq, outs[1].Seq, outs[1].Anchor)
+	}
+}
+
+// TestBlockedToolStillDeclaresSchema 验证禁用档"照常声明 schema、执行层拦下"。
+//
+// 这是 markup 泄漏的修复点：以前禁用档干脆不传 tools，模型想调工具没有合法出口，
+// 就把 <tool_use>/<tool_call>/<｜｜DSML｜｜> 之类的调用语法手写进正文发给用户。
+// 现在 schema 照常声明，模型走正规通道，回执告诉它不可用，它自己改口说人话。
+func TestBlockedToolStillDeclaresSchema(t *testing.T) {
+	toolbox := &fakeToolbox{specs: []port.ToolSpec{{Name: "send_voice"}}}
+	model := &seqModel{responses: []*port.ChatResponse{
+		{ToolCalls: []port.ToolCall{{ID: "call-1", Name: "send_voice", Arguments: json.RawMessage(`{"text":"晚安"}`)}}},
+		{Content: "晚安，早点睡"},
+	}}
+	o, err := New(Config{Model: model, Persona: "p", Toolbox: toolbox, Policy: noToolsPolicy})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	outs, err := o.Replies(context.Background(), messageEvent())
+	if err != nil {
+		t.Fatalf("Replies() error = %v", err)
+	}
+	if toolbox.called != "" {
+		t.Fatalf("禁用档仍然执行了工具 %q", toolbox.called)
+	}
+	if len(model.requests) != 2 {
+		t.Fatalf("model calls = %d, want 2（被拒后改口）", len(model.requests))
+	}
+	if len(model.requests[0].Tools) != 1 {
+		t.Fatalf("第一次请求 tools = %+v, 禁用档也必须声明 schema", model.requests[0].Tools)
+	}
+	last := model.requests[1].Messages[len(model.requests[1].Messages)-1]
+	if last.Role != port.ChatRoleTool || last.ToolCallID != "call-1" || last.Content != blockedNote {
+		t.Fatalf("回执 = %+v, want 不可用回执", last)
+	}
+	if len(outs) != 1 || !strings.Contains(outs[0].Content.Plain, "早点睡") {
+		t.Fatalf("outs = %+v", outs)
+	}
+}
+
+// TestBlockedToolFallbackWithoutSchema 验证模型连着要工具时不至于没话说。
+//
+// 拒到 maxBlockedRounds 次还想要，就必须撤掉 tools 再问一次：schema 在位时它只会
+// 反复发 tool_calls，用户会看到"发个语音"之后半天没有回复。
+func TestBlockedToolFallbackWithoutSchema(t *testing.T) {
+	toolbox := &fakeToolbox{specs: []port.ToolSpec{{Name: "send_voice"}}}
+	call := &port.ChatResponse{ToolCalls: []port.ToolCall{{ID: "c", Name: "send_voice"}}}
+	model := &seqModel{responses: []*port.ChatResponse{call, call, call}}
+	o, err := New(Config{Model: model, Persona: "p", Toolbox: toolbox, Policy: noToolsPolicy})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	outs, err := o.Replies(context.Background(), messageEvent())
+	if err != nil {
+		t.Fatalf("Replies() error = %v", err)
+	}
+	if toolbox.called != "" {
+		t.Fatalf("禁用档仍然执行了工具 %q", toolbox.called)
+	}
+	if len(model.requests) != maxBlockedRounds+2 {
+		t.Fatalf("model calls = %d, want %d", len(model.requests), maxBlockedRounds+2)
+	}
+	fallback := model.requests[len(model.requests)-1]
+	if len(fallback.Tools) != 0 {
+		t.Fatalf("兜底请求仍带 tools：%+v", fallback.Tools)
+	}
+	if !strings.Contains(fallback.Messages[0].Content, "不能用任何工具") {
+		t.Fatalf("兜底请求缺少强制说明：%q", fallback.Messages[0].Content)
+	}
+	if len(outs) != 1 || !strings.Contains(outs[0].Content.Plain, "fallback") {
+		t.Fatalf("outs = %+v", outs)
 	}
 }
