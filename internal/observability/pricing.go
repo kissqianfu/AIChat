@@ -91,3 +91,26 @@ func costMicros(slot LLMSlot, prompt, completion, cached int, at time.Time) floa
 	miss := prompt - cached
 	return float64(miss)*p.miss + float64(cached)*p.hit + float64(completion)*p.out
 }
+
+// 按次计费的工具：元 / 千次**成功**请求。
+//
+// 官方口径（DeepSeek 平台文档）：Search 5 元 / 1,000 次成功请求，
+// Fetch 5 元 / 1,000 次成功请求。5 元/千次 = 0.005 元/次 = 5000 微元/次。
+//
+// 这套价格与 token 无关、也不分峰谷，所以不参与 isPeak 折算；失败请求不计费，
+// 因此打点位置在「请求成功」那一行之后，而不是调用入口。
+const toolUnitMicros = 5_000
+
+// toolCostMicros 返回一次成功工具请求的费用（微元）。不计费工具返回 0。
+//
+// 只有走 DeepSeek 官方接口的才算：web_search 恒为官方 /v1/tools/search；
+// web_fetch 在官方 Fetch 失败时会回退直连抓取（自付流量不花钱），那条路径
+// 不调用本函数。
+func toolCostMicros(name string) float64 {
+	switch name {
+	case "web_search", "web_fetch":
+		return toolUnitMicros
+	default:
+		return 0
+	}
+}

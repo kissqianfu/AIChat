@@ -86,3 +86,23 @@ func TestPriceForStrongSlot(t *testing.T) {
 		t.Fatal("imagegen 按张计费，不该参与 token 成本")
 	}
 }
+
+// TestToolCostMicros 锁住按次计费口径：DeepSeek Search/Fetch 均 5 元/千次成功请求，
+// 折成微元是每次 5000。其余工具（本地时间、计算、表情包）不花钱。
+func TestToolCostMicros(t *testing.T) {
+	if got := toolCostMicros("web_search"); got != 5000 {
+		t.Fatalf("toolCostMicros(web_search) = %v, want 5000", got)
+	}
+	if got := toolCostMicros("web_fetch"); got != 5000 {
+		t.Fatalf("toolCostMicros(web_fetch) = %v, want 5000", got)
+	}
+	for _, name := range []string{"current_time", "calculate", "sticker_pick", "send_voice", ""} {
+		if got := toolCostMicros(name); got != 0 {
+			t.Fatalf("toolCostMicros(%q) = %v, want 0", name, got)
+		}
+	}
+	// 千次请求 = 5 元，别把"5 元/千次"误写成"5 元/次"。
+	if toolCostMicros("web_search")*1000 != 5e6 {
+		t.Fatalf("千次搜索费用 = %v 微元, want 5e6（5 元）", toolCostMicros("web_search")*1000)
+	}
+}

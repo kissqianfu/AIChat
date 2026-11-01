@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
@@ -77,6 +78,8 @@ func (t *WebFetchTool) Invoke(ctx context.Context, args json.RawMessage) (port.T
 	}
 	if t.backend != nil {
 		if title, content, err := t.backend.FetchPage(ctx, rawURL); err == nil {
+			// 官方 Fetch 成功才计费（5 元/千次成功请求）；回退直连抓取不花钱。
+			observability.ObserveToolCost("web_fetch")
 			body := strings.TrimSpace(content)
 			if title != "" {
 				body = "# " + strings.TrimSpace(title) + "\n\n" + body

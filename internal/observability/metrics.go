@@ -82,6 +82,12 @@ var (
 		Name: "aichat_tool_cache_hits_total",
 		Help: "工具结果缓存命中数",
 	})
+	// 按次计费的工具（DeepSeek Search/Fetch，5 元/千次成功请求）费用。
+	// 与 token 成本同量纲（微元），看板可相加。
+	toolCostMicrosTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_tool_cost_micros_total",
+		Help: "按次计费工具的费用（人民币微元；5 元/千次成功请求，除 1e6 得元）",
+	}, []string{"tool"})
 	replyCacheLookups = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "aichat_reply_cache_lookups_total",
 		Help: "回复缓存查询数（与 hits 相除得命中率）",
@@ -151,6 +157,16 @@ func CountToolError(name string) { toolErrorsTotal.WithLabelValues(name).Inc() }
 
 // CountToolCacheHit 计数工具结果缓存命中。
 func CountToolCacheHit() { toolCacheHits.Inc() }
+
+// ObserveToolCost 记一次**成功**的按次计费工具请求（web_search / web_fetch）。
+//
+// 调用点必须落在 HTTP 200 且解析成功之后：缓存命中不会走到工具实现，失败请求
+// 官方不计费，两者都不该打这个点。不计费的工具名会被静默忽略。
+func ObserveToolCost(name string) {
+	if cost := toolCostMicros(name); cost > 0 {
+		toolCostMicrosTotal.WithLabelValues(name).Add(cost)
+	}
+}
 
 // CountReplyCacheLookup 计数回复缓存查询。
 func CountReplyCacheLookup() { replyCacheLookups.Inc() }

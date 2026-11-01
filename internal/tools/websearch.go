@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 	"github.com/kissqianfu/aichat/internal/port"
 	"github.com/kissqianfu/aichat/internal/safety"
@@ -118,6 +119,8 @@ func (s *SearchTool) Invoke(ctx context.Context, args json.RawMessage) (port.Too
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return port.ToolResult{}, fmt.Errorf("web_search: decode: %w", err)
 	}
+	// 到这里才算一次"成功请求"（官方口径：5 元/千次成功请求，失败不计费）。
+	observability.ObserveToolCost("web_search")
 	if len(parsed.Results) == 0 {
 		return port.ToolResult{Content: "没有搜索到结果"}, nil
 	}

@@ -239,3 +239,19 @@ func TestStreamUsageTapRecordsTokens(t *testing.T) {
 		t.Fatalf("cost 增量 = %v 微元, want 1232", got)
 	}
 }
+
+// TestObserveToolCost 验证按次计费打点：只累加计费工具，且每次 5000 微元。
+// 全局累加器，只能断言增量（同包其它测试也会写）。
+func TestObserveToolCost(t *testing.T) {
+	before := testutil.ToFloat64(toolCostMicrosTotal.WithLabelValues("web_search"))
+	ObserveToolCost("web_search")
+	ObserveToolCost("web_search")
+	ObserveToolCost("current_time") // 不计费：应被静默忽略
+	got := testutil.ToFloat64(toolCostMicrosTotal.WithLabelValues("web_search")) - before
+	if got != 2*toolUnitMicros {
+		t.Fatalf("web_search 费用增量 = %v, want %v", got, float64(2*toolUnitMicros))
+	}
+	if free := testutil.ToFloat64(toolCostMicrosTotal.WithLabelValues("current_time")); free != 0 {
+		t.Fatalf("current_time 费用 = %v, want 0", free)
+	}
+}
