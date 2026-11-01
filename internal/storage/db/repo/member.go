@@ -34,7 +34,7 @@ func (r *MemberRepo) BumpMember(ctx context.Context, groupID, openid, displayNam
 			msg_count = group_member.msg_count + 1,
 			last_msg_at = excluded.last_msg_at`)
 	if _, err := r.store.Writer().ExecContext(ctx, query,
-		groupID, openid, displayName, r.stamp(r.clk.Now()), r.stamp(r.clk.Now())); err != nil {
+		groupID, openid, displayName, stamp(r.store, r.clk.Now()), stamp(r.store, r.clk.Now())); err != nil {
 		return fmt.Errorf("repo: bump group_member: %w", err)
 	}
 	return nil
@@ -43,7 +43,7 @@ func (r *MemberRepo) BumpMember(ctx context.Context, groupID, openid, displayNam
 // MarkLeft 打退群标记。
 func (r *MemberRepo) MarkLeft(ctx context.Context, groupID, openid string) error {
 	query := r.store.Dialect().Rebind(`UPDATE group_member SET left_at = ? WHERE group_id = ? AND openid = ?`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, r.stamp(r.clk.Now()), groupID, openid); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, stamp(r.store, r.clk.Now()), groupID, openid); err != nil {
 		return fmt.Errorf("repo: mark group_member left: %w", err)
 	}
 	return nil
@@ -56,7 +56,7 @@ func (r *MemberRepo) BumpPoke(ctx context.Context, groupID, src, dst string) err
 		ON CONFLICT (group_id, src_openid, dst_openid) DO UPDATE SET
 			poke_count = member_pair.poke_count + 1, last_at = excluded.last_at`)
 	if _, err := r.store.Writer().ExecContext(ctx, query,
-		groupID, src, dst, r.stamp(r.clk.Now())); err != nil {
+		groupID, src, dst, stamp(r.store, r.clk.Now())); err != nil {
 		return fmt.Errorf("repo: bump member_pair: %w", err)
 	}
 	return nil
@@ -231,14 +231,6 @@ func (r *MemberRepo) PruneDaily(ctx context.Context, keepDays int) (int64, error
 		total += n
 	}
 	return total, nil
-}
-
-// stamp 按驱动返回时间值。
-func (r *MemberRepo) stamp(t time.Time) any {
-	if r.store.Dialect().Name() == "postgres" {
-		return t
-	}
-	return t.UnixMilli()
 }
 
 // dayString 格式化本地日期 YYYY-MM-DD。

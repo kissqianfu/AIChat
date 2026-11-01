@@ -29,7 +29,7 @@ func (r *CallLogRepo) InsertLLM(ctx context.Context, eventID, slot string, promp
 	query := r.store.Dialect().Rebind(`INSERT INTO llm_call_log
 		(event_id, slot, prompt_tokens, completion_tokens, finish_reason, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, eventID, slot, promptTokens, completionTokens, finishReason, r.stamp()); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, eventID, slot, promptTokens, completionTokens, finishReason, stamp(r.store, r.clk.Now())); err != nil {
 		return fmt.Errorf("repo: insert llm log: %w", err)
 	}
 	return nil
@@ -39,19 +39,10 @@ func (r *CallLogRepo) InsertLLM(ctx context.Context, eventID, slot string, promp
 func (r *CallLogRepo) InsertTool(ctx context.Context, eventID, name string, isError bool, chars int) error {
 	query := r.store.Dialect().Rebind(`INSERT INTO tool_call_log
 		(event_id, name, is_error, chars, created_at) VALUES (?, ?, ?, ?, ?)`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, eventID, name, isError, chars, r.stamp()); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, eventID, name, isError, chars, stamp(r.store, r.clk.Now())); err != nil {
 		return fmt.Errorf("repo: insert tool log: %w", err)
 	}
 	return nil
-}
-
-// stamp 按驱动返回时间值。
-func (r *CallLogRepo) stamp() any {
-	now := r.clk.Now()
-	if r.store.Dialect().Name() == "postgres" {
-		return now
-	}
-	return now.UnixMilli()
 }
 
 var _ = time.Time{}

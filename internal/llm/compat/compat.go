@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
+	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
 )
 
@@ -260,7 +261,7 @@ func (m *Model) Chat(ctx context.Context, req port.ChatRequest) (*port.ChatRespo
 		return nil, fmt.Errorf("%s: read response: %w", m.dialect.Name(), err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: HTTP %d: %s", m.dialect.Name(), resp.StatusCode, truncateForLog(body))
+		return nil, fmt.Errorf("%s: HTTP %d: %s", m.dialect.Name(), resp.StatusCode, text.TruncateHead(body, 512))
 	}
 
 	var parsed chatResponse
@@ -304,7 +305,7 @@ func (m *Model) Stream(ctx context.Context, req port.ChatRequest) (port.ChatStre
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("%s: stream HTTP %d: %s", m.dialect.Name(), resp.StatusCode, truncateForLog(body))
+		return nil, fmt.Errorf("%s: stream HTTP %d: %s", m.dialect.Name(), resp.StatusCode, text.TruncateHead(body, 512))
 	}
 	s := &sseStream{body: resp.Body, dialect: m.dialect}
 	s.scanner = bufio.NewScanner(resp.Body)
@@ -521,15 +522,6 @@ func fromWireToolCalls(calls []wireToolCall) []port.ToolCall {
 		})
 	}
 	return out
-}
-
-// truncateForLog 截断错误体，避免把超长内容打进日志。
-func truncateForLog(body []byte) string {
-	const limit = 512
-	if len(body) <= limit {
-		return string(body)
-	}
-	return string(body[:limit]) + "..."
 }
 
 // buildWireContent 构造消息内容：纯文本直接用 string；有图片时切成多模态数组。

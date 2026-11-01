@@ -30,7 +30,7 @@ func (r *GroupAdminRepo) Add(ctx context.Context, groupID, openid, note string) 
 	query := r.store.Dialect().Rebind(`INSERT INTO group_admin (group_id, openid, note, created_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT (group_id, openid) DO UPDATE SET note = excluded.note`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, groupID, openid, note, r.stamp()); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, groupID, openid, note, stamp(r.store, r.clk.Now())); err != nil {
 		return fmt.Errorf("repo: add group admin: %w", err)
 	}
 	return nil
@@ -38,16 +38,8 @@ func (r *GroupAdminRepo) Add(ctx context.Context, groupID, openid, note string) 
 
 // Remove 移除群管理员；返回是否确实删除。
 func (r *GroupAdminRepo) Remove(ctx context.Context, groupID, openid string) (bool, error) {
-	query := r.store.Dialect().Rebind(`DELETE FROM group_admin WHERE group_id = ? AND openid = ?`)
-	res, err := r.store.Writer().ExecContext(ctx, query, groupID, openid)
-	if err != nil {
-		return false, fmt.Errorf("repo: remove group admin: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("repo: remove group admin rows: %w", err)
-	}
-	return n > 0, nil
+	return execChanged(ctx, r.store, "remove group admin",
+		`DELETE FROM group_admin WHERE group_id = ? AND openid = ?`, groupID, openid)
 }
 
 // IsGroupAdmin 判断用户是否该群本地管理员。
@@ -84,13 +76,4 @@ func (r *GroupAdminRepo) List(ctx context.Context, groupID string, limit int) ([
 		return nil, fmt.Errorf("repo: scan group admins: %w", err)
 	}
 	return out, nil
-}
-
-// stamp 按驱动返回时间值。
-func (r *GroupAdminRepo) stamp() any {
-	now := r.clk.Now()
-	if r.store.Dialect().Name() == "postgres" {
-		return now
-	}
-	return now.UnixMilli()
 }

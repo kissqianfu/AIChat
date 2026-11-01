@@ -37,13 +37,13 @@ func TestMemoryConsolidateArchiveAndPurge(t *testing.T) {
 	// low：30 天未访问、S=1 → R≈0，应归档。
 	old := now.Add(-30 * 24 * time.Hour)
 	if _, err := store.Writer().ExecContext(ctx, store.Dialect().Rebind(
-		`UPDATE memory_item SET last_access_at = ?, stability = 1.0 WHERE id = ?`), repo.stamp(old), lowID); err != nil {
+		`UPDATE memory_item SET last_access_at = ?, stability = 1.0 WHERE id = ?`), stamp(store, old), lowID); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	// cold：已归档 8 天、低重要度 → 应物理删除。
 	if _, err := store.Writer().ExecContext(ctx, store.Dialect().Rebind(
 		`UPDATE memory_item SET status = 'archived', updated_at = ? WHERE id = ?`),
-		repo.stamp(now.Add(-8*24*time.Hour)), coldID); err != nil {
+		stamp(store, now.Add(-8*24*time.Hour)), coldID); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 

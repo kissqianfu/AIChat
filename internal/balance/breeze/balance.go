@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/kissqianfu/aichat/internal/balance"
+	"github.com/kissqianfu/aichat/internal/platform/text"
 )
 
 // DefaultBaseURL 是 Breeze 的 API 根（TTS 与余额同一层级的 /v1）。
@@ -94,7 +95,7 @@ func FetchBalance(ctx context.Context, client *http.Client, apiKey string) (*Bal
 		return nil, fmt.Errorf("breeze: 读取余额响应: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("breeze: 余额接口 HTTP %d: %s", resp.StatusCode, truncateForLog(body))
+		return nil, fmt.Errorf("breeze: 余额接口 HTTP %d: %s", resp.StatusCode, text.TruncateHead(body, 512))
 	}
 	var out Balance
 	if err := json.Unmarshal(body, &out); err != nil {
@@ -121,13 +122,4 @@ func FetchSnapshot(ctx context.Context, client *http.Client, apiKey string) (*ba
 		snap.Note = fmt.Sprintf("有流水待结算（每 %d 秒结算一次），余额可能滞后", b.SettlementIntervalS)
 	}
 	return snap, nil
-}
-
-// truncateForLog 截断错误响应体，避免把整页 HTML 灌进日志。
-func truncateForLog(body []byte) string {
-	const limit = 512
-	if len(body) <= limit {
-		return string(body)
-	}
-	return string(body[:limit]) + "..."
 }

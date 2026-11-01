@@ -31,7 +31,7 @@ func (r *BanRepo) Ban(ctx context.Context, scene port.Scene, ownerID, userID, re
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (scene, owner_id, user_id) DO UPDATE SET reason = excluded.reason`)
 	if _, err := r.store.Writer().ExecContext(ctx, query,
-		sceneName(scene), ownerID, userID, reason, r.stamp()); err != nil {
+		sceneName(scene), ownerID, userID, reason, stamp(r.store, r.clk.Now())); err != nil {
 		return fmt.Errorf("repo: ban user: %w", err)
 	}
 	return nil
@@ -39,16 +39,8 @@ func (r *BanRepo) Ban(ctx context.Context, scene port.Scene, ownerID, userID, re
 
 // Unban 解除拉黑；返回是否确实删除了记录。
 func (r *BanRepo) Unban(ctx context.Context, scene port.Scene, ownerID, userID string) (bool, error) {
-	query := r.store.Dialect().Rebind(`DELETE FROM banned_user WHERE scene = ? AND owner_id = ? AND user_id = ?`)
-	res, err := r.store.Writer().ExecContext(ctx, query, sceneName(scene), ownerID, userID)
-	if err != nil {
-		return false, fmt.Errorf("repo: unban user: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("repo: unban rows: %w", err)
-	}
-	return n > 0, nil
+	return execChanged(ctx, r.store, "unban user",
+		`DELETE FROM banned_user WHERE scene = ? AND owner_id = ? AND user_id = ?`, sceneName(scene), ownerID, userID)
 }
 
 // IsBanned 判断用户是否被该群拉黑。
@@ -85,13 +77,4 @@ func (r *BanRepo) ListBans(ctx context.Context, scene port.Scene, ownerID string
 		return nil, fmt.Errorf("repo: scan bans: %w", err)
 	}
 	return out, nil
-}
-
-// stamp 按驱动返回时间值。
-func (r *BanRepo) stamp() any {
-	now := r.clk.Now()
-	if r.store.Dialect().Name() == "postgres" {
-		return now
-	}
-	return now.UnixMilli()
 }

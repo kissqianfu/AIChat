@@ -24,14 +24,6 @@ func NewAdminRepo(store *db.Store, clk clock.Clock) *AdminRepo {
 	return &AdminRepo{store: store, clk: clk}
 }
 
-// stamp 按驱动返回时间值（SQLite 毫秒 / PG time.Time）。
-func (r *AdminRepo) stamp(t time.Time) any {
-	if r.store.Dialect().Name() == "postgres" {
-		return t
-	}
-	return t.UnixMilli()
-}
-
 // BindRole 绑定/更新管理员角色。
 func (r *AdminRepo) BindRole(ctx context.Context, openid, role, note string) error {
 	if openid == "" || role == "" {
@@ -41,7 +33,7 @@ func (r *AdminRepo) BindRole(ctx context.Context, openid, role, note string) err
 	query := r.store.Dialect().Rebind(`INSERT INTO admin_user (openid, role, note, created_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT (openid) DO UPDATE SET role = excluded.role, note = excluded.note`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, openid, role, note, r.stamp(now)); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, openid, role, note, stamp(r.store, now)); err != nil {
 		return fmt.Errorf("repo: bind admin role: %w", err)
 	}
 	return nil
@@ -65,7 +57,7 @@ func (r *AdminRepo) SaveCode(ctx context.Context, codeHash, role, groupID, note 
 	now := r.clk.Now()
 	query := r.store.Dialect().Rebind(`INSERT INTO auth_code (code_hash, role, group_id, note, expires_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, codeHash, role, groupID, note, r.stamp(expires), r.stamp(now)); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, codeHash, role, groupID, note, stamp(r.store, expires), stamp(r.store, now)); err != nil {
 		return fmt.Errorf("repo: save auth code: %w", err)
 	}
 	return nil
@@ -107,16 +99,8 @@ func (r *AdminRepo) ConsumeCode(ctx context.Context, codeHash string, now time.T
 // RevokeCode 按哈希作废未过期且未使用的认证码（群内泄露处置，docs/01 §6.3）。
 // 返回是否确实作废了一条；码不存在 / 已过期 / 已使用都返回 false。
 func (r *AdminRepo) RevokeCode(ctx context.Context, codeHash string, now time.Time) (bool, error) {
-	query := r.store.Dialect().Rebind(`DELETE FROM auth_code WHERE code_hash = ? AND expires_at > ?`)
-	res, err := r.store.Writer().ExecContext(ctx, query, codeHash, r.stamp(now))
-	if err != nil {
-		return false, fmt.Errorf("repo: revoke auth code: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("repo: revoke auth code rows: %w", err)
-	}
-	return n > 0, nil
+	return execChanged(ctx, r.store, "revoke auth code",
+		`DELETE FROM auth_code WHERE code_hash = ? AND expires_at > ?`, codeHash, stamp(r.store, now))
 }
 
 // Owners 列出全部 owner openid（泄露告警用）。
@@ -142,7 +126,7 @@ func (r *AdminRepo) Owners(ctx context.Context) ([]string, error) {
 func (r *AdminRepo) Audit(ctx context.Context, actor, action, detail string) error {
 	now := r.clk.Now()
 	query := r.store.Dialect().Rebind(`INSERT INTO audit_log (actor, action, detail, created_at) VALUES (?, ?, ?, ?)`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, actor, action, detail, r.stamp(now)); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, actor, action, detail, stamp(r.store, now)); err != nil {
 		return fmt.Errorf("repo: insert audit: %w", err)
 	}
 	return nil
@@ -185,14 +169,6 @@ func (r *AdminRepo) ListAdmins(ctx context.Context) ([]AdminUser, error) {
 
 // RevokeAdmin 撤销管理员身份；owner 角色受保护不可撤（/admin revoke）。
 func (r *AdminRepo) RevokeAdmin(ctx context.Context, openid string) (bool, error) {
-	query := r.store.Dialect().Rebind(`DELETE FROM admin_user WHERE openid = ? AND role <> 'owner'`)
-	res, err := r.store.Writer().ExecContext(ctx, query, openid)
-	if err != nil {
-		return false, fmt.Errorf("repo: revoke admin: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("repo: revoke admin rows: %w", err)
-	}
-	return n > 0, nil
+	return execChanged(ctx, r.store, "revoke admin",
+		`DELETE FROM admin_user WHERE openid = ? AND role <> 'owner'`, openid)
 }

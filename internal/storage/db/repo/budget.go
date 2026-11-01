@@ -44,7 +44,7 @@ func (r *BudgetRepo) Take(ctx context.Context, key string, window time.Duration,
 			upsert := r.store.Dialect().Rebind(`INSERT INTO passive_budget (key, window_start, used, updated_at)
 				VALUES (?, ?, 1, ?)
 				ON CONFLICT (key) DO UPDATE SET window_start = excluded.window_start, used = 1, updated_at = excluded.updated_at`)
-			if _, err := tx.ExecContext(ctx, upsert, key, r.stamp(now), r.stamp(now)); err != nil {
+			if _, err := tx.ExecContext(ctx, upsert, key, stamp(r.store, now), stamp(r.store, now)); err != nil {
 				return fmt.Errorf("repo: budget reset: %w", err)
 			}
 			seq, ok = 1, true
@@ -57,7 +57,7 @@ func (r *BudgetRepo) Take(ctx context.Context, key string, window time.Duration,
 			return nil
 		}
 		update := r.store.Dialect().Rebind(`UPDATE passive_budget SET used = used + 1, updated_at = ? WHERE key = ?`)
-		if _, err := tx.ExecContext(ctx, update, r.stamp(now), key); err != nil {
+		if _, err := tx.ExecContext(ctx, update, stamp(r.store, now), key); err != nil {
 			return fmt.Errorf("repo: budget update: %w", err)
 		}
 		seq, ok = used+1, true
@@ -67,12 +67,4 @@ func (r *BudgetRepo) Take(ctx context.Context, key string, window time.Duration,
 		return 0, false, err
 	}
 	return seq, ok, nil
-}
-
-// stamp 按驱动返回时间值。
-func (r *BudgetRepo) stamp(t time.Time) any {
-	if r.store.Dialect().Name() == "postgres" {
-		return t
-	}
-	return t.UnixMilli()
 }

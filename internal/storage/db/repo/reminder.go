@@ -31,7 +31,7 @@ func (r *ReminderRepo) Add(ctx context.Context, item port.Reminder) error {
 		VALUES (?, ?, ?, ?, ?, 'pending', ?)`)
 	if _, err := r.store.Writer().ExecContext(ctx, query,
 		sceneName(item.Scene), item.TargetID, item.OwnerID, item.Content,
-		r.stamp(item.RemindAt), r.stamp(item.CreatedAt)); err != nil {
+		stamp(r.store, item.RemindAt), stamp(r.store, item.CreatedAt)); err != nil {
 		return fmt.Errorf("repo: add reminder: %w", err)
 	}
 	return nil
@@ -44,7 +44,7 @@ func (r *ReminderRepo) ListDue(ctx context.Context, now time.Time, limit int) ([
 	}
 	query := r.store.Dialect().Rebind(`SELECT id, scene, target_id, owner_id, content, remind_at, created_at
 		FROM reminder WHERE status = 'pending' AND remind_at <= ? ORDER BY remind_at ASC LIMIT ?`)
-	return r.list(ctx, query, r.stamp(now), limit)
+	return r.list(ctx, query, stamp(r.store, now), limit)
 }
 
 // ListByOwner 取某人最近待发送/已发送提醒（/remind list）。
@@ -98,7 +98,7 @@ func (r *ReminderRepo) list(ctx context.Context, query string, args ...any) ([]p
 // MarkSent 标记提醒已发送。
 func (r *ReminderRepo) MarkSent(ctx context.Context, id int64, at time.Time) error {
 	query := r.store.Dialect().Rebind(`UPDATE reminder SET status = 'sent', sent_at = ? WHERE id = ? AND status = 'pending'`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, r.stamp(at), id); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, stamp(r.store, at), id); err != nil {
 		return fmt.Errorf("repo: mark reminder sent: %w", err)
 	}
 	return nil
@@ -106,22 +106,6 @@ func (r *ReminderRepo) MarkSent(ctx context.Context, id int64, at time.Time) err
 
 // Cancel 取消自己的待发送提醒；返回是否取消成功（他人/不存在/已发送返回 false）。
 func (r *ReminderRepo) Cancel(ctx context.Context, id int64, ownerID string) (bool, error) {
-	query := r.store.Dialect().Rebind(`UPDATE reminder SET status = 'canceled' WHERE id = ? AND owner_id = ? AND status = 'pending'`)
-	res, err := r.store.Writer().ExecContext(ctx, query, id, ownerID)
-	if err != nil {
-		return false, fmt.Errorf("repo: cancel reminder: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("repo: cancel reminder rows: %w", err)
-	}
-	return n > 0, nil
-}
-
-// stamp 按驱动返回时间值（SQLite 毫秒 / PG time.Time）。
-func (r *ReminderRepo) stamp(t time.Time) any {
-	if r.store.Dialect().Name() == "postgres" {
-		return t
-	}
-	return t.UnixMilli()
+	return execChanged(ctx, r.store, "cancel reminder",
+		`UPDATE reminder SET status = 'canceled' WHERE id = ? AND owner_id = ? AND status = 'pending'`, id, ownerID)
 }

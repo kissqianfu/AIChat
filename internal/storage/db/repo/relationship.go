@@ -32,7 +32,7 @@ func (r *RelationshipRepo) Upsert(ctx context.Context, rel port.Relationship) er
 		ON CONFLICT (scene, owner_id, user_id) DO UPDATE SET
 			summary = excluded.summary, turns = excluded.turns, updated_at = excluded.updated_at`)
 	if _, err := r.store.Writer().ExecContext(ctx, query,
-		sceneName(rel.Scene), rel.OwnerID, rel.UserID, rel.Summary, rel.Turns, r.stamp(rel.UpdatedAt)); err != nil {
+		sceneName(rel.Scene), rel.OwnerID, rel.UserID, rel.Summary, rel.Turns, stamp(r.store, rel.UpdatedAt)); err != nil {
 		return fmt.Errorf("repo: upsert relationship: %w", err)
 	}
 	return nil
@@ -65,12 +65,4 @@ func (r *RelationshipRepo) Get(ctx context.Context, scene port.Scene, ownerID, u
 	}
 	rel.Scene, rel.OwnerID, rel.UpdatedAt = scene, ownerID, updated
 	return rel, true, nil
-}
-
-// stamp 按驱动返回时间值。
-func (r *RelationshipRepo) stamp(t time.Time) any {
-	if r.store.Dialect().Name() == "postgres" {
-		return t
-	}
-	return t.UnixMilli()
 }

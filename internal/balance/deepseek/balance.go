@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/kissqianfu/aichat/internal/balance"
+	"github.com/kissqianfu/aichat/internal/platform/text"
 )
 
 // balanceMaxBody 限制余额响应读取（这个响应很小，给 64KiB 富余）。
@@ -79,7 +80,7 @@ func FetchBalance(ctx context.Context, client *http.Client, apiKey string) (*Bal
 		return nil, fmt.Errorf("deepseek: 读取余额响应: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("deepseek: 余额接口 HTTP %d: %s", resp.StatusCode, truncateForLog(body))
+		return nil, fmt.Errorf("deepseek: 余额接口 HTTP %d: %s", resp.StatusCode, text.TruncateHead(body, 512))
 	}
 	var out Balance
 	if err := json.Unmarshal(body, &out); err != nil {
@@ -137,13 +138,4 @@ func FetchSnapshot(ctx context.Context, client *http.Client, apiKey string) (*ba
 		}
 	}
 	return snap, nil
-}
-
-// truncateForLog 截断错误响应体，避免把整页 HTML 灌进日志。
-func truncateForLog(body []byte) string {
-	const limit = 512
-	if len(body) <= limit {
-		return string(body)
-	}
-	return string(body[:limit]) + "..."
 }

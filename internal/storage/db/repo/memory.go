@@ -111,7 +111,7 @@ func (r *MemoryRepo) RememberFact(ctx context.Context, item port.MemoryItem) (bo
 			return err
 		}
 		inserted = true
-		now := r.stamp(r.clk.Now())
+		now := stamp(r.store, r.clk.Now())
 		for _, id := range oldIDs {
 			q := r.store.Dialect().Rebind(`UPDATE memory_item SET invalid_at = ?, updated_at = ? WHERE id = ?`)
 			if _, err := tx.ExecContext(ctx, q, now, now, id); err != nil {
@@ -141,19 +141,11 @@ func (r *MemoryRepo) insert(ctx context.Context, e execer, item port.MemoryItem)
 	_, err := e.ExecContext(ctx, query,
 		string(item.Scope), item.OwnerID, item.Kind, item.Subject, item.Predicate, item.Object,
 		item.Content, text.Bigrams(item.Content), item.Importance, item.Confidence,
-		r.stamp(now), r.stamp(now), r.stamp(now), r.stamp(now))
+		stamp(r.store, now), stamp(r.store, now), stamp(r.store, now), stamp(r.store, now))
 	if err != nil {
 		return fmt.Errorf("repo: insert memory: %w", err)
 	}
 	return nil
-}
-
-// stamp 按驱动返回时间值（SQLite 毫秒 / PG time.Time）。
-func (r *MemoryRepo) stamp(t time.Time) any {
-	if r.store.Dialect().Name() == "postgres" {
-		return t
-	}
-	return t.UnixMilli()
 }
 
 // Recall 召回：有 query 向量时按范围取最近候选做向量精排；否则 SQL bigram 粗筛 + Go 精排。
@@ -219,22 +211,14 @@ func scanRecallRows(rows *sql.Rows, postgres bool, q port.RecallQuery, now time.
 	candidates := make([]port.MemoryItem, 0, 16)
 	for rows.Next() {
 		var (
-			item         port.MemoryItem
-			scope        string
-			lastAccessMS int64
-			lastAccess   time.Time
+			item  port.MemoryItem
+			scope string
 		)
-		if postgres {
-			if err := rows.Scan(&item.ID, &scope, &item.OwnerID, &item.Kind, &item.Subject, &item.Predicate, &item.Object, &item.Content, &item.Importance, &item.Confidence, &item.Stability, &item.Pinned, &lastAccess); err != nil {
-				return nil, fmt.Errorf("repo: scan memory: %w", err)
-			}
-			item.LastAccess = lastAccess
-		} else {
-			if err := rows.Scan(&item.ID, &scope, &item.OwnerID, &item.Kind, &item.Subject, &item.Predicate, &item.Object, &item.Content, &item.Importance, &item.Confidence, &item.Stability, &item.Pinned, &lastAccessMS); err != nil {
-				return nil, fmt.Errorf("repo: scan memory: %w", err)
-			}
-			item.LastAccess = time.UnixMilli(lastAccessMS)
+		dst, at := timeDst(postgres)
+		if err := rows.Scan(&item.ID, &scope, &item.OwnerID, &item.Kind, &item.Subject, &item.Predicate, &item.Object, &item.Content, &item.Importance, &item.Confidence, &item.Stability, &item.Pinned, dst); err != nil {
+			return nil, fmt.Errorf("repo: scan memory: %w", err)
 		}
+		item.LastAccess = at()
 		item.Scope = port.Scope(scope)
 		item.Score = scoreMemory(item, queryBigrams, now)
 		candidates = append(candidates, item)
@@ -378,19 +362,11 @@ func (r *MemoryRepo) ListTop(ctx context.Context, scope port.Scope, ownerID stri
 	var out []port.MemoryItem
 	for rows.Next() {
 		var item port.MemoryItem
-		var lastAccessMS int64
-		var lastAccess time.Time
-		if postgres {
-			if err := rows.Scan(&item.ID, &item.Kind, &item.Content, &item.Importance, &lastAccess); err != nil {
-				return nil, fmt.Errorf("repo: scan top memory: %w", err)
-			}
-			item.LastAccess = lastAccess
-		} else {
-			if err := rows.Scan(&item.ID, &item.Kind, &item.Content, &item.Importance, &lastAccessMS); err != nil {
-				return nil, fmt.Errorf("repo: scan top memory: %w", err)
-			}
-			item.LastAccess = time.UnixMilli(lastAccessMS)
+		dst, at := timeDst(postgres)
+		if err := rows.Scan(&item.ID, &item.Kind, &item.Content, &item.Importance, dst); err != nil {
+			return nil, fmt.Errorf("repo: scan top memory: %w", err)
 		}
+		item.LastAccess = at()
 		item.Scope = scope
 		out = append(out, item)
 	}
@@ -414,19 +390,11 @@ func (r *MemoryRepo) ListActive(ctx context.Context, scope port.Scope, ownerID s
 	var out []port.MemoryItem
 	for rows.Next() {
 		var item port.MemoryItem
-		var lastAccessMS int64
-		var lastAccess time.Time
-		if postgres {
-			if err := rows.Scan(&item.ID, &item.Kind, &item.Content, &item.Importance, &lastAccess); err != nil {
-				return nil, fmt.Errorf("repo: scan memory list: %w", err)
-			}
-			item.LastAccess = lastAccess
-		} else {
-			if err := rows.Scan(&item.ID, &item.Kind, &item.Content, &item.Importance, &lastAccessMS); err != nil {
-				return nil, fmt.Errorf("repo: scan memory list: %w", err)
-			}
-			item.LastAccess = time.UnixMilli(lastAccessMS)
+		dst, at := timeDst(postgres)
+		if err := rows.Scan(&item.ID, &item.Kind, &item.Content, &item.Importance, dst); err != nil {
+			return nil, fmt.Errorf("repo: scan memory list: %w", err)
 		}
+		item.LastAccess = at()
 		item.Scope = scope
 		item.OwnerID = ownerID
 		out = append(out, item)
@@ -446,7 +414,7 @@ func (r *MemoryRepo) DueReviews(ctx context.Context, now time.Time, limit int) (
 		FROM memory_item WHERE status = 'active' AND invalid_at IS NULL
 		  AND (next_review_at IS NULL OR next_review_at <= ?)
 		ORDER BY last_access_at ASC LIMIT ?`)
-	rows, err := r.store.Reader().QueryContext(ctx, query, r.stamp(now), limit)
+	rows, err := r.store.Reader().QueryContext(ctx, query, stamp(r.store, now), limit)
 	if err != nil {
 		return nil, fmt.Errorf("repo: due reviews: %w", err)
 	}
@@ -456,19 +424,11 @@ func (r *MemoryRepo) DueReviews(ctx context.Context, now time.Time, limit int) (
 	for rows.Next() {
 		var item port.MemoryItem
 		var scope string
-		var lastAccessMS int64
-		var lastAccess time.Time
-		if postgres {
-			if err := rows.Scan(&item.ID, &scope, &item.OwnerID, &item.Content, &item.Importance, &item.Stability, &lastAccess); err != nil {
-				return nil, fmt.Errorf("repo: scan review: %w", err)
-			}
-			item.LastAccess = lastAccess
-		} else {
-			if err := rows.Scan(&item.ID, &scope, &item.OwnerID, &item.Content, &item.Importance, &item.Stability, &lastAccessMS); err != nil {
-				return nil, fmt.Errorf("repo: scan review: %w", err)
-			}
-			item.LastAccess = time.UnixMilli(lastAccessMS)
+		dst, at := timeDst(postgres)
+		if err := rows.Scan(&item.ID, &scope, &item.OwnerID, &item.Content, &item.Importance, &item.Stability, dst); err != nil {
+			return nil, fmt.Errorf("repo: scan review: %w", err)
 		}
+		item.LastAccess = at()
 		item.Scope = port.Scope(scope)
 		out = append(out, item)
 	}
@@ -483,7 +443,7 @@ func (r *MemoryRepo) ApplyReview(ctx context.Context, id int64, stability, impor
 	query := r.store.Dialect().Rebind(`UPDATE memory_item
 		SET stability = ?, importance = ?, next_review_at = ?, updated_at = ?
 		WHERE id = ?`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, stability, importance, r.stamp(nextReview), r.stamp(r.clk.Now()), id); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, stability, importance, stamp(r.store, nextReview), stamp(r.store, r.clk.Now()), id); err != nil {
 		return fmt.Errorf("repo: apply review: %w", err)
 	}
 	return nil
@@ -500,7 +460,7 @@ func (r *MemoryRepo) Touch(ctx context.Context, ids []int64, at time.Time) error
 	}
 	placeholders := make([]string, len(ids))
 	args := make([]any, 0, len(ids)+1)
-	args = append(args, r.stamp(now))
+	args = append(args, stamp(r.store, now))
 	for i, id := range ids {
 		placeholders[i] = "?"
 		args = append(args, id)
@@ -517,7 +477,7 @@ func (r *MemoryRepo) Touch(ctx context.Context, ids []int64, at time.Time) error
 // Pin 设置/取消置顶（置顶记忆召回加分，docs/01 §3.1）。
 func (r *MemoryRepo) Pin(ctx context.Context, id int64, pinned bool) error {
 	query := r.store.Dialect().Rebind(`UPDATE memory_item SET pinned = ?, updated_at = ? WHERE id = ?`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, pinned, r.stamp(r.clk.Now()), id); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, pinned, stamp(r.store, r.clk.Now()), id); err != nil {
 		return fmt.Errorf("repo: pin memory: %w", err)
 	}
 	return nil
@@ -542,24 +502,16 @@ func (r *MemoryRepo) Consolidate(ctx context.Context, now time.Time, rArchive, i
 	var archiveIDs []int64
 	for rows.Next() {
 		var (
-			id           int64
-			lastAccess   time.Time
-			lastAccessMS int64
-			stability    float64
-			importance   float64
+			id         int64
+			stability  float64
+			importance float64
 		)
-		if postgres {
-			if err := rows.Scan(&id, &lastAccess, &stability, &importance); err != nil {
-				_ = rows.Close()
-				return 0, 0, fmt.Errorf("repo: scan consolidation: %w", err)
-			}
-		} else {
-			if err := rows.Scan(&id, &lastAccessMS, &stability, &importance); err != nil {
-				_ = rows.Close()
-				return 0, 0, fmt.Errorf("repo: scan consolidation: %w", err)
-			}
-			lastAccess = time.UnixMilli(lastAccessMS)
+		dst, at := timeDst(postgres)
+		if err := rows.Scan(&id, dst, &stability, &importance); err != nil {
+			_ = rows.Close()
+			return 0, 0, fmt.Errorf("repo: scan consolidation: %w", err)
 		}
+		lastAccess := at()
 		if retrievability(lastAccess, now, stability) < rArchive && importance < importanceArchive {
 			archiveIDs = append(archiveIDs, id)
 		}
@@ -574,7 +526,7 @@ func (r *MemoryRepo) Consolidate(ctx context.Context, now time.Time, rArchive, i
 	if len(archiveIDs) > 0 {
 		placeholders := make([]string, len(archiveIDs))
 		args := make([]any, 0, len(archiveIDs)+1)
-		args = append(args, r.stamp(now))
+		args = append(args, stamp(r.store, now))
 		for i, id := range archiveIDs {
 			placeholders[i] = "?"
 			args = append(args, id)
@@ -592,7 +544,7 @@ func (r *MemoryRepo) Consolidate(ctx context.Context, now time.Time, rArchive, i
 	cutoff := now.Add(-7 * 24 * time.Hour)
 	del := r.store.Dialect().Rebind(`DELETE FROM memory_item
 		WHERE status = 'archived' AND importance < 0.30 AND updated_at <= ?`)
-	res, err := r.store.Writer().ExecContext(ctx, del, r.stamp(cutoff))
+	res, err := r.store.Writer().ExecContext(ctx, del, stamp(r.store, cutoff))
 	if err != nil {
 		return archived, 0, fmt.Errorf("repo: purge memory: %w", err)
 	}
@@ -608,7 +560,7 @@ func (r *MemoryRepo) Forget(ctx context.Context, scope port.Scope, ownerID strin
 	now := r.clk.Now()
 	placeholders := make([]string, len(ids))
 	args := make([]any, 0, len(ids)+3)
-	args = append(args, r.stamp(now), string(scope), ownerID)
+	args = append(args, stamp(r.store, now), string(scope), ownerID)
 	for i, id := range ids {
 		placeholders[i] = "?"
 		args = append(args, id)

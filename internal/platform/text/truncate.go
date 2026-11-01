@@ -2,6 +2,20 @@ package text
 
 import "unicode"
 
+// TruncateHead 按字节截断到最多 n 字节，超出时以 "..." 结尾。
+//
+// 用于错误响应体/日志这类「能看就行」的场景，不保证多字节字符不被切半
+// （字符安全截断用 Truncate）；n <= 0 返回空串，不足 n 字节原样返回。
+func TruncateHead(b []byte, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(b) <= n {
+		return string(b)
+	}
+	return string(b[:n]) + "..."
+}
+
 // Truncate 把 s 截断到最多 n 个"字符"（grapheme cluster，按视觉字符计）。
 //
 // 不会把 emoji、肤色修饰、ZWJ 家庭、国旗或组合重音符切成半个——

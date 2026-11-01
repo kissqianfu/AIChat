@@ -35,7 +35,7 @@ func (r *StickerRepo) Insert(ctx context.Context, item port.Sticker) (bool, erro
 		VALUES (?, ?, ?, ?, ?, ?, 0, ?)
 		ON CONFLICT (file_hash) DO NOTHING`)
 	res, err := r.store.Writer().ExecContext(ctx, query,
-		item.Source, item.Hash, item.FilePath, item.MIME, strings.Join(item.Tags, " "), item.Emotion, r.stamp(now))
+		item.Source, item.Hash, item.FilePath, item.MIME, strings.Join(item.Tags, " "), item.Emotion, stamp(r.store, now))
 	if err != nil {
 		return false, fmt.Errorf("repo: insert sticker: %w", err)
 	}
@@ -110,7 +110,7 @@ func (r *StickerRepo) ListForPick(ctx context.Context, emotion, tag string, limi
 // MarkUsed 记录一次使用（use_count+1、last_used_at=now），用于降低重复率。
 func (r *StickerRepo) MarkUsed(ctx context.Context, id int64) error {
 	query := r.store.Dialect().Rebind(`UPDATE sticker SET use_count = use_count + 1, last_used_at = ? WHERE id = ?`)
-	if _, err := r.store.Writer().ExecContext(ctx, query, r.stamp(r.clk.Now()), id); err != nil {
+	if _, err := r.store.Writer().ExecContext(ctx, query, stamp(r.store, r.clk.Now()), id); err != nil {
 		return fmt.Errorf("repo: mark sticker used: %w", err)
 	}
 	return nil
@@ -153,12 +153,4 @@ func mergeTags(old, add []string) []string {
 		}
 	}
 	return out
-}
-
-// stamp 按驱动返回时间值（SQLite 毫秒 / PG time.Time）。
-func (r *StickerRepo) stamp(t time.Time) any {
-	if r.store.Dialect().Name() == "postgres" {
-		return t
-	}
-	return t.UnixMilli()
 }
