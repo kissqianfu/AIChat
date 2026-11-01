@@ -77,3 +77,29 @@ func TestVoiceToolMIMEPassthrough(t *testing.T) {
 		t.Fatalf("audio = %+v", result.Blocks[0])
 	}
 }
+
+// TestVoiceToolRejectsMonologue 验证"内心独白"不会被合成成语音念出来。
+//
+// 推理模型会把自我对话当台词塞进 text（"用户要再来一句语音……这次遵守"），
+// 念出来就是一串自言自语；这时宁可失败让它重写，也不要把这段送进用户耳朵。
+func TestVoiceToolRejectsMonologue(t *testing.T) {
+	tool := NewVoiceTool(&fakeVoiceSynth{silk: []byte("S")})
+	monologues := []string{
+		"用户要再来一句语音，说是测试。就发一句短的。",
+		"规则说语音就只发语音，这次遵守。",
+		"注意：语音发出去后不要另打文字。",
+	}
+	for _, text := range monologues {
+		args, _ := json.Marshal(map[string]string{"text": text})
+		if _, err := tool.Invoke(context.Background(), args); err == nil {
+			t.Fatalf("Invoke(%q) error = nil, want 拒绝内心独白", text)
+		}
+	}
+	// 正常台词不能被误伤。
+	for _, text := range []string{"晚安，早点睡", "今天累不累呀", "我在呢"} {
+		args, _ := json.Marshal(map[string]string{"text": text})
+		if _, err := tool.Invoke(context.Background(), args); err != nil {
+			t.Fatalf("Invoke(%q) error = %v, 正常台词不该被拦", text, err)
+		}
+	}
+}

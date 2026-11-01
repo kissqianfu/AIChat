@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -62,6 +63,12 @@ func (t *VoiceTool) Invoke(ctx context.Context, args json.RawMessage) (port.Tool
 	if text == "" || len([]rune(text)) > voiceMaxTextRunes {
 		return port.ToolResult{}, fmt.Errorf("send_voice: text 为空或超过 %d 字", voiceMaxTextRunes)
 	}
+	// 念出来的必须是"对对方说的话"。推理模型常把内心独白当台词塞进来
+	// （"用户要再来一句语音……规则说只发语音，这次遵守"），合成出来就是一串
+	// 自言自语塞进用户耳朵里。拦一道，让模型换个说法重来。
+	if looksLikeThought(text) {
+		return port.ToolResult{}, errors.New("send_voice: text 像你的思考过程，不像要说的话；只写你打算对他说的原话")
+	}
 	clk := clock.System()
 	start := clk.Now()
 	silk, err := t.synth.Synthesize(ctx, text)
@@ -83,6 +90,22 @@ func (t *VoiceTool) Invoke(ctx context.Context, args json.RawMessage) (port.Tool
 		Content: "语音已直接发到对话里。不要复述、不要说明你发了语音，也不用问听没听到；有别的要说的就正常接着说。",
 		Blocks:  []port.Block{port.AudioBlock{Data: silk, MIME: mime, FileName: voiceFileName(mime)}},
 	}, nil
+}
+
+// looksLikeThought 判断 text 是不是"内心独白"而不是台词。
+//
+// 判据取的都是当面说话几乎不会出现的词：把对方称"用户"、讨论规则/测试/这一轮、
+// 提醒自己"不要复述"。命中就拒绝合成，让模型重写一句人话。
+func looksLikeThought(text string) bool {
+	if strings.Contains(text, "用户") {
+		return true
+	}
+	for _, marker := range []string{"规则", "本轮", "这一轮", "这次测试", "不要另", "不要复述", "遵守", "我该", "思考"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // voiceFileName 按 MIME 推断语音文件名（平台校验文件名与格式一致）。

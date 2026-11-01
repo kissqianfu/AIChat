@@ -206,6 +206,49 @@ func TestStreamToolCallAccumulate(t *testing.T) {
 	}
 }
 
+// TestStreamDropsReasoning 验证思考段不会冒充正文流出去。
+//
+// 推理模型"先想再调工具"很常见：reasoning 增量若被当 Content 返回，编排层会先
+// 开流把内心独白贴到群里，随后发现同一响应里有 tool_calls 又放弃流式——字已经
+// 发出去了，收不回来。
+func TestStreamDropsReasoning(t *testing.T) {
+	m := newTestModel(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"用户要再来一句语音\"}}]}\n\n"+
+			"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"这次遵守规则\"}}]}\n\n"+
+			"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"send_voice\",\"arguments\":\"{\\\"text\\\":\\\"晚安\\\"}\"}}]}}]}\n\n"+
+			"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"+
+			"data: [DONE]\n\n")
+	})
+	stream, err := m.Stream(context.Background(), port.ChatRequest{})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var content strings.Builder
+	var calls []port.ToolCall
+	for {
+		delta, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv() error = %v", err)
+		}
+		content.WriteString(delta.Content)
+		if delta.FinishReason == "tool_calls" {
+			calls = delta.ToolCalls
+		}
+	}
+	if content.Len() != 0 {
+		t.Fatalf("思考段漏成了正文：%q", content.String())
+	}
+	if len(calls) != 1 || calls[0].Name != "send_voice" {
+		t.Fatalf("tool calls = %+v", calls)
+	}
+}
+
 func TestNewValidation(t *testing.T) {
 	if _, err := New(Config{}); err == nil {
 		t.Fatal("New(empty) error = nil, want error")

@@ -380,12 +380,18 @@ func (s *sseStream) Recv() (port.Delta, error) {
 			}
 			return delta, nil
 		}
-		// 常规增量：内容优先，无内容时回思考段。
+		// 常规增量：只产出正文，思考段一律丢弃。
+		//
+		// 曾经把 reasoning_content 当 Content 返回（"无内容时回思考段"），后果是
+		// 推理模型的内心独白会被当成回复流出去：模型先"想"一段（"用户要再来一句
+		// 语音……这次遵守"），流式已经开始往外贴字；等 tool_calls 到达，编排层判定
+		// "内容与工具调用混合"放弃流式——但字已经贴在用户屏幕上了，Abort 收不回
+		// 私聊里那条消息。用户看到的就是"机器人在念操作步骤"。
 		if choice.Delta.Content != "" {
 			return port.Delta{Content: choice.Delta.Content}, nil
 		}
 		if choice.Delta.ReasoningContent != "" {
-			return port.Delta{Content: choice.Delta.ReasoningContent}, nil
+			continue
 		}
 	}
 	// scanner 耗尽：正常 EOF 或读错误。

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -76,7 +77,9 @@ func (o *Orchestrator) chatWithTools(ctx context.Context, model port.ChatModel, 
 		wg.Wait()
 		for i, call := range resp.ToolCalls {
 			result := results[i]
-			o.cfg.Logger.Info("工具已调用", "name", call.Name, "is_error", result.IsError, "chars", len(result.Content))
+			// 参数也记一笔（截断）：模型把"思考"塞进工具参数这类问题，
+			// 光看工具名和回执长度根本看不出来，只能靠参数原样复盘。
+			o.cfg.Logger.Info("工具已调用", "name", call.Name, "is_error", result.IsError, "chars", len(result.Content), "args", clipArgs(call.Arguments))
 			media = append(media, result.Blocks...)
 			if audioSent != nil && hasAudioBlock(result.Blocks) {
 				audioSent.Store(true)
@@ -89,4 +92,14 @@ func (o *Orchestrator) chatWithTools(ctx context.Context, model port.ChatModel, 
 		}
 	}
 	return nil, media, fmt.Errorf("orchestrator: 工具调用超过 %d 轮", maxToolRounds)
+}
+
+// clipArgs 把工具参数截断成一行短串（日志用）：太长会淹没日志，也不该整段留痕。
+func clipArgs(args json.RawMessage) string {
+	const max = 120
+	s := strings.Join(strings.Fields(string(args)), " ")
+	if len([]rune(s)) <= max {
+		return s
+	}
+	return string([]rune(s)[:max]) + "…"
 }
