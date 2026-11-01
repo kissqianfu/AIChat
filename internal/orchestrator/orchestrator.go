@@ -182,7 +182,7 @@ func (o *Orchestrator) Replies(ctx context.Context, ev port.Event) ([]port.Outbo
 		//（2026-10-31 生产实测：@ 空内容剥标签后为空串被静默忽略，用户感知即"@ 了没反应"）；
 		// 没被叫到则维持忽略（群闲聊纯图/纯表情不打扰）。
 		if ev.AtMe {
-			userText = "@了我，但没有说话"
+			userText = placeholderNoText
 		} else {
 			observability.CountDropped(observability.DropEmpty)
 			return nil, ErrIgnored
@@ -544,11 +544,14 @@ func isSkipReply(content string) bool {
 	return strings.EqualFold(strings.TrimSpace(s), "SKIP")
 }
 
-// firstText 取第一段文本并去掉首尾空白。
+// firstText 取第一段文本，去掉平台 markup 与首尾空白（归一化见 inbound_text.go）。
+//
+// 归一化放在这里是因为它是全项目取正文的唯一入口：模型输入、历史、记忆抽取、
+// 回复缓存的 key 全部由它派生，改一处即全线一致。
 func firstText(parts []port.Part) string {
 	for _, p := range parts {
 		if p.Kind == port.PartText {
-			return strings.TrimSpace(p.Text)
+			return normalizeInbound(p.Text)
 		}
 	}
 	return ""
