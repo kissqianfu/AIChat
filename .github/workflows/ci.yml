@@ -1,22 +1,22 @@
 name: ci
 
-# 流水线分三段（2026-11-02 重建）：
+# 流水线分三段：
 #
 #   build-check  通用语义检查：编译 / go vet / 两个目标交叉编译 / 竞态测试。
 #                全是 Go 生态标准命令，写死在 yml 里不会漂移。
 #   build        交叉编译 linux/amd64，注入提交号，产出 artifact。
-#   deploy       SSH 直连服务器：先 `cat >` 把二进制送过去，再把
-#                .github/deploy-remote.sh 当剧本用 `sudo -n bash -s` 执行
-#                （备份 → 安装 → 重启 → 自检 30s → 失败装回旧二进制）。
-#                服务器上不安装任何脚本，仓库 HEAD 就是部署逻辑的唯一真相。
+#   deploy       照《GitHub Actions CICD》手册的范式：
+#                  appleboy/scp-action 把二进制传到 /tmp/aichat-deploy/
+#                  appleboy/ssh-action 上去备份 → 替换 → 重启 → 健康检查
+#                健康检查失败自动装回旧二进制（手册只 curl 一次，这里补 30s 轮询 + 回滚）。
 #
 # 需要的仓库 secret 只有四个：SSH_HOST / SSH_PORT / SSH_USER / SSH_PRIVATE_KEY。
-# 主机公钥不存 secret，写死在下面的 Prepare SSH 步骤里做比对（公钥不是秘密，
-# 写死才能挡住中间人）。
+# 主机指纹写死在两个 action 的 fingerprint 里（公钥不是秘密，写死才挡得住中间人）。
+# 重装系统后这里会硬失败，用这条取新值：
+#   ssh-keyscan -p 8090 -t ed25519 120.26.138.139 | ssh-keygen -lf -
 #
-# 质量门分两层，这里要说清：dupl 重复度、gosec/govulncheck、覆盖率门槛
-# 留在本地 scripts/check.sh（不入库）。因此 CI 绿只代表"能编译、能过测试"，
-# 那三项需要 push 前自己跑一次。
+# 质量门分两层：dupl 重复度、gosec/govulncheck、覆盖率门槛留在本地
+# scripts/check.sh（不入库）。CI 绿只代表"能编译、能过测试"。
 #
 # 部署开关是仓库变量 DEPLOY_ENABLED：不配=照常部署，配成 false 即停自动部署。
 on:
@@ -130,19 +130,14 @@ jobs:
     concurrency:
       group: deploy-prod
       cancel-in-progress: false
-    env:
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_PORT: ${{ secrets.SSH_PORT }}
-      SSH_USER: ${{ secrets.SSH_USER }}
     steps:
-      # 要读 .github/deploy-remote.sh，所以这里必须检出。
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: aichat-linux
+
+      - name: Show build info
+        run: cat build-info.txt
 
       # 深夜不部署：webhook 模式下进程重启那几秒的事件没有重投机制，
       # 23:00-07:00 正是有人闲聊的时候。手动触发（workflow_dispatch）不受限。
@@ -158,62 +153,95 @@ jobs:
             echo "::notice::当前 ${h} 点（北京时间），夜间不自动部署；需要的话手动 Run workflow"
           fi
 
-      # 私钥只落到 runner 的临时文件，job 结束 runner 即销毁。
-      - name: Prepare SSH
+      # 二进制先落 /tmp，校验过再原子替换，不直接覆盖线上文件。
+      - name: Upload binary to server
         if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          set -eu
-          missing=""
-          for n in SSH_HOST SSH_PORT SSH_USER SSH_PRIVATE_KEY; do
-            eval "v=\${$n:-}"
-            [ -n "$v" ] || missing="$missing $n"
-          done
-          if [ -n "$missing" ]; then
-            echo "::error::缺少仓库 secret:$missing（Settings → Secrets and variables → Actions）"
-            exit 1
-          fi
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # 主机指纹固定：不匹配直接失败，而不是"悄悄连上一台假服务器"
+          fingerprint: SHA256:VzJtDilCitCByIdBtkgZtmgk0bh9z3fbCV5OeXy9PT0
+          source: aichat-linux
+          target: /tmp/aichat-deploy/
+          overwrite: true
+          timeout: 60s
 
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null \
-            || { echo "::error::SSH_PRIVATE_KEY 解析失败：要贴 BEGIN/END 之间的全文"; exit 1; }
-
-          # 主机公钥固定在这里。换机器或重装系统后这里会硬失败——把新公钥
-          # （ssh-keyscan -p <port> -t ed25519 <host>）抄进这一行即可。
-          expected=AAAAC3NzaC1lZDI1NTE5AAAAIGnghEWLJUrTfWDYLHdVvTgm3XNZN2ll7X/To7VH2pXb
-          got=$(ssh-keyscan -T 10 -p "$SSH_PORT" -t ed25519 "$SSH_HOST" 2>/dev/null \
-                | awk '$2=="ssh-ed25519"{print $3}' | head -1 || true)
-          if [ "$got" != "$expected" ]; then
-            echo "::error::主机密钥不匹配：期望 ${expected:0:20}… 实际 ${got:0:20}…"
-            echo "可能是中间人，也可能机器换过；确认无误后更新 ci.yml 里的 expected。"
-            exit 1
-          fi
-          printf '[%s]:%s ssh-ed25519 %s\n' "$SSH_HOST" "$SSH_PORT" "$got" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-          echo "私钥可解析，主机密钥校验通过"
-
-      # 二进制走 stdin 落到 /tmp/aichat.incoming，不依赖 scp/sftp。
-      - name: Upload binary
+      # 服务器端：备份 → 原子替换 → 重启 → 自检 30s（失败自动装回）。
+      # “|”把缩进行的文本拼成一个多行字符串交给远端 shell 执行。
+      - name: Backup, replace, restart, health check
         if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
-        run: |
-          set -eu
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -T \
-            "$SSH_USER@$SSH_HOST" 'cat > /tmp/aichat.incoming' < aichat-linux
-          echo "已上传 $(stat -c %s aichat-linux) 字节"
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: SHA256:VzJtDilCitCByIdBtkgZtmgk0bh9z3fbCV5OeXy9PT0
+          command_timeout: 5m
+          script: |
+            # 远端执行器可能是 sh 也可能是 bash，所以只用 POSIX 语法
+            # （不用 pipefail / 数组 / [[ ]]），两边都能跑。
+            set -eu
+            APP_DIR=/opt/aichat
+            BIN=$APP_DIR/aichat
+            SERVICE=aichat
+            HEALTH_URL=http://127.0.0.1:23015/metrics
+            INCOMING=/tmp/aichat-deploy/aichat-linux
+            MIN_BYTES=5000000
+            KEEP=5
 
-      # 剧本从 stdin 送进去执行，服务器上不留文件。
-      - name: Install and verify
-        if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
-        run: |
-          set -eu
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -T \
-            "$SSH_USER@$SSH_HOST" 'sudo -n bash -s' < .github/deploy-remote.sh
+            # sudo -n：要密码就直接失败，不会卡在这里等输入
+            sudo -n true
+
+            [ -f "$INCOMING" ] || { echo "上传的文件不在 $INCOMING"; exit 1; }
+            SIZE=$(stat -c %s "$INCOMING")
+            [ "$SIZE" -ge "$MIN_BYTES" ] || { echo "收到 $SIZE 字节，小于阈值 $MIN_BYTES"; exit 1; }
+            MAGIC=$(od -An -tx1 -N4 "$INCOMING" | tr -d ' \n')
+            [ "$MAGIC" = "7f454c46" ] || { echo "不是 ELF 文件（magic=$MAGIC），拒绝部署"; exit 1; }
+            echo "[deploy] 收到二进制 $SIZE 字节"
+
+            # 备份只回二进制、不动数据库：schema 是单向前进的，
+            # 旧二进制配新库比"部署失败"更难查。
+            TS=$(date +%Y%m%d-%H%M%S)
+            BACKUP=$APP_DIR/aichat.bak-$TS
+            sudo cp -a "$BIN" "$BACKUP"
+            echo "[deploy] 已备份 $BACKUP"
+
+            sudo install -m 755 -o root -g root "$INCOMING" "$BIN"
+            rm -rf /tmp/aichat-deploy
+            sudo systemctl restart "$SERVICE"
+
+            # 自检：进程活着 + 端口真的在服务。只看 is-active 不够，
+            # 配置写错时进程也可能短暂挂着。
+            HEALTHY=0
+            i=0
+            while [ "$i" -lt 30 ]; do
+              i=$((i + 1))
+              sleep 1
+              if systemctl is-active --quiet "$SERVICE" && curl -fsS -o /dev/null "$HEALTH_URL"; then
+                HEALTHY=1
+                break
+              fi
+            done
+
+            if [ "$HEALTHY" -ne 1 ]; then
+              echo "自检 30s 未通过，回滚到 $BACKUP"
+              sudo install -m 755 -o root -g root "$BACKUP" "$BIN"
+              sudo systemctl restart "$SERVICE"
+              sudo journalctl -u "$SERVICE" --since "-2min" --no-pager | tail -20 || true
+              exit 1
+            fi
+
+            # 版本号取自启动日志"版本已加载"。人设加载也打 version（那是人设版本号），
+            # 必须先按 msg 过滤，否则抓到的永远是最后一条"人设已加载"。
+            VER=$(sudo journalctl -u "$SERVICE" --since "-2min" --no-pager 2>/dev/null \
+              | grep -a '版本已加载' | grep -a -o '"version":"[^"]*"' | tail -1 | cut -d'"' -f4 || true)
+            ERRS=$(sudo journalctl -u "$SERVICE" --since "-2min" --no-pager 2>/dev/null \
+              | grep -a -c '"level":"ERROR"' || true)
+            echo "[deploy] 部署成功 version=${VER:-未知} errors=${ERRS:-0}"
+
+            # 只留最近 KEEP 份备份（二进制 20M 一份，这台机器盘不大）
+            sudo ls -1t "$APP_DIR"/aichat.bak-* 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r sudo rm -f || true
