@@ -1,7 +1,0 @@
-# 统一按 LF 存进仓库：scripts/*.sh 在 Git Bash / WSL 下不能被 CRLF 破坏
-* text=auto
-*.sh text eol=lf
-*.go text eol=lf
-*.yaml text eol=lf
-*.yml text eol=lf
-*.md text eol=lf

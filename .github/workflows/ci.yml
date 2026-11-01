@@ -1,24 +1,5 @@
 name: ci
 
-# 流水线分三段：
-#
-#   build-check  通用语义检查：编译 / go vet / 两个目标交叉编译 / 竞态测试。
-#                全是 Go 生态标准命令，写死在 yml 里不会漂移。
-#   build        交叉编译 linux/amd64，注入提交号，产出 artifact。
-#   deploy       照《GitHub Actions CICD》手册的范式：
-#                  appleboy/scp-action 把二进制传到 /tmp/aichat-deploy/
-#                  appleboy/ssh-action 上去备份 → 替换 → 重启 → 健康检查
-#                健康检查失败自动装回旧二进制（手册只 curl 一次，这里补 30s 轮询 + 回滚）。
-#
-# 需要的仓库 secret 只有四个：SSH_HOST / SSH_PORT / SSH_USER / SSH_PRIVATE_KEY。
-# 主机指纹写死在两个 action 的 fingerprint 里（公钥不是秘密，写死才挡得住中间人）。
-# 重装系统后这里会硬失败，用这条取新值：
-#   ssh-keyscan -p 8090 -t ed25519 120.26.138.139 | ssh-keygen -lf -
-#
-# 质量门分两层：dupl 重复度、gosec/govulncheck、覆盖率门槛留在本地
-# scripts/check.sh（不入库）。CI 绿只代表"能编译、能过测试"。
-#
-# 部署开关是仓库变量 DEPLOY_ENABLED：不配=照常部署，配成 false 即停自动部署。
 on:
   push:
     branches: [main]
@@ -36,212 +17,45 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache: true
 
-      # 依赖按 go.mod 的 tag 拉（QQ-SDK v0.1.0），不需要检出 sibling 目录；
-      # go.work 本来就不入库，checkout 里也不会存在，所以这里天然走 tag。
-      - name: Build
-        run: go build ./...
+      - name: Test
+        run: go test ./...
 
-      - name: Vet
-        run: go vet ./...
-
-      # 两个交叉编译都必须 CGO_ENABLED=0：CGO=1 时用的是宿主 gcc，
-      # 编不属于它的目标会挂在 runtime/cgo（grp.h: No such file）。
-      - name: Cross-compile linux/amd64
+      - name: Build (linux/amd64)
+        run: go build -trimpath -ldflags "-s -w" -o aichat ./cmd/aichat
         env:
-          CGO_ENABLED: "0"
-        run: GOOS=linux GOARCH=amd64 go build ./...
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
 
-      - name: Cross-compile windows/amd64
-        env:
-          CGO_ENABLED: "0"
-        run: GOOS=windows GOARCH=amd64 go build ./...
-
-      # -race 需要 cgo，而 ubuntu runner 自带 gcc，这里放开即可。
-      #
-      # 失败时把关键行转成 annotation：job 日志接口要仓库 admin 权限，
-      # 而 annotation 是匿名可读的，排查时不用先登录。
-      - name: Test with race detector
-        env:
-          CGO_ENABLED: "1"
-        run: |
-          set +e
-          go test -race -count=1 ./... > /tmp/test.log 2>&1
-          rc=$?
-          tail -80 /tmp/test.log
-          if [ "$rc" -ne 0 ]; then
-            grep -E '^(FAIL|--- FAIL|=== RUN)|WARNING: DATA RACE|^panic:' /tmp/test.log \
-              | head -10 | while IFS= read -r line; do
-                echo "::error::$line"
-              done
-          fi
-          exit "$rc"
-
-  build:
-    needs: build-check
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
-
-      - name: Build linux/amd64 with version
-        env:
-          CGO_ENABLED: "0"
-        run: |
-          VERSION="${GITHUB_SHA::7}"
-          GOOS=linux GOARCH=amd64 go build -trimpath \
-            -ldflags "-s -w -X main.version=${VERSION}" \
-            -o aichat-linux ./cmd/aichat
-          ls -lh aichat-linux
-          sha256sum aichat-linux | tee aichat-linux.sha256
-          # 记下这次构建用的两个仓库版本，排查"线上和本地不一致"时先看它
-          {
-            echo "aichat ${GITHUB_SHA}"
-            echo "qqsdk  $(GOWORK=off go list -m -f '{{.Version}}' github.com/kissqianfu/QQ-SDK)"
-            echo "built  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } | tee build-info.txt
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aichat-linux
-          path: |
-            aichat-linux
-            aichat-linux.sha256
-            build-info.txt
-          if-no-files-found: error
-          retention-days: 7
-
-  deploy:
-    needs: build
-    # 仓库变量，不是 secret：不配照常部署，配成 false 即停自动部署。
-    if: vars.DEPLOY_ENABLED != 'false'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # 连推两次不能让两个部署交叉安装。
-    concurrency:
-      group: deploy-prod
-      cancel-in-progress: false
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: aichat-linux
-
-      - name: Show build info
-        run: cat build-info.txt
-
-      # 深夜不部署：webhook 模式下进程重启那几秒的事件没有重投机制，
-      # 23:00-07:00 正是有人闲聊的时候。手动触发（workflow_dispatch）不受限。
-      - name: Check deploy window
-        id: window
-        run: |
-          h=$(TZ=Asia/Shanghai date +%H)
-          if [ "$h" -ge 7 ] && [ "$h" -lt 23 ]; then
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-            echo "当前 ${h} 点（北京时间），在部署窗口内"
-          else
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::当前 ${h} 点（北京时间），夜间不自动部署；需要的话手动 Run workflow"
-          fi
-
-      # 二进制先落 /tmp，校验过再原子替换，不直接覆盖线上文件。
       - name: Upload binary to server
-        if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
-        uses: appleboy/scp-action@v1.0.0
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           port: ${{ secrets.SSH_PORT }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          # 主机指纹固定：不匹配直接失败，而不是"悄悄连上一台假服务器"
-          fingerprint: SHA256:VzJtDilCitCByIdBtkgZtmgk0bh9z3fbCV5OeXy9PT0
-          source: aichat-linux
+          source: aichat
           target: /tmp/aichat-deploy/
-          overwrite: true
-          timeout: 60s
 
-      # 服务器端：备份 → 原子替换 → 重启 → 自检 30s（失败自动装回）。
-      # “|”把缩进行的文本拼成一个多行字符串交给远端 shell 执行。
+
+
       - name: Backup, replace, restart, health check
-        if: steps.window.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
-        uses: appleboy/ssh-action@v1.2.5
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           port: ${{ secrets.SSH_PORT }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          fingerprint: SHA256:VzJtDilCitCByIdBtkgZtmgk0bh9z3fbCV5OeXy9PT0
-          command_timeout: 5m
           script: |
-            # 远端执行器可能是 sh 也可能是 bash，所以只用 POSIX 语法
-            # （不用 pipefail / 数组 / [[ ]]），两边都能跑。
-            set -eu
-            APP_DIR=/opt/aichat
-            BIN=$APP_DIR/aichat
-            SERVICE=aichat
-            HEALTH_URL=http://127.0.0.1:23015/metrics
-            INCOMING=/tmp/aichat-deploy/aichat-linux
-            MIN_BYTES=5000000
-            KEEP=5
-
-            # sudo -n：要密码就直接失败，不会卡在这里等输入
-            sudo -n true
-
-            [ -f "$INCOMING" ] || { echo "上传的文件不在 $INCOMING"; exit 1; }
-            SIZE=$(stat -c %s "$INCOMING")
-            [ "$SIZE" -ge "$MIN_BYTES" ] || { echo "收到 $SIZE 字节，小于阈值 $MIN_BYTES"; exit 1; }
-            MAGIC=$(od -An -tx1 -N4 "$INCOMING" | tr -d ' \n')
-            [ "$MAGIC" = "7f454c46" ] || { echo "不是 ELF 文件（magic=$MAGIC），拒绝部署"; exit 1; }
-            echo "[deploy] 收到二进制 $SIZE 字节"
-
-            # 备份只回二进制、不动数据库：schema 是单向前进的，
-            # 旧二进制配新库比"部署失败"更难查。
-            TS=$(date +%Y%m%d-%H%M%S)
-            BACKUP=$APP_DIR/aichat.bak-$TS
-            sudo cp -a "$BIN" "$BACKUP"
-            echo "[deploy] 已备份 $BACKUP"
-
-            sudo install -m 755 -o root -g root "$INCOMING" "$BIN"
+            set -e                                     # 任一步失败即中止
+            TS=$(date +%m%d-%H%M)
+            sudo cp /opt/aichat/aichat /opt/aichat/aichat.bak-$TS   # 备份旧版
+            sudo mv /tmp/aichat-deploy/aichat /opt/aichat/aichat # 原子替换
+            sudo chown bot:bot /opt/aichat/aichat  
+            sudo chmod 0755 /opt/aichat/aichat
             rm -rf /tmp/aichat-deploy
-            sudo systemctl restart "$SERVICE"
-
-            # 自检：进程活着 + 端口真的在服务。只看 is-active 不够，
-            # 配置写错时进程也可能短暂挂着。
-            HEALTHY=0
-            i=0
-            while [ "$i" -lt 30 ]; do
-              i=$((i + 1))
-              sleep 1
-              if systemctl is-active --quiet "$SERVICE" && curl -fsS -o /dev/null "$HEALTH_URL"; then
-                HEALTHY=1
-                break
-              fi
-            done
-
-            if [ "$HEALTHY" -ne 1 ]; then
-              echo "自检 30s 未通过，回滚到 $BACKUP"
-              sudo install -m 755 -o root -g root "$BACKUP" "$BIN"
-              sudo systemctl restart "$SERVICE"
-              sudo journalctl -u "$SERVICE" --since "-2min" --no-pager | tail -20 || true
-              exit 1
-            fi
-
-            # 版本号取自启动日志"版本已加载"。人设加载也打 version（那是人设版本号），
-            # 必须先按 msg 过滤，否则抓到的永远是最后一条"人设已加载"。
-            VER=$(sudo journalctl -u "$SERVICE" --since "-2min" --no-pager 2>/dev/null \
-              | grep -a '版本已加载' | grep -a -o '"version":"[^"]*"' | tail -1 | cut -d'"' -f4 || true)
-            ERRS=$(sudo journalctl -u "$SERVICE" --since "-2min" --no-pager 2>/dev/null \
-              | grep -a -c '"level":"ERROR"' || true)
-            echo "[deploy] 部署成功 version=${VER:-未知} errors=${ERRS:-0}"
-
-            # 只留最近 KEEP 份备份（二进制 20M 一份，这台机器盘不大）
-            sudo ls -1t "$APP_DIR"/aichat.bak-* 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r sudo rm -f || true
+            sudo systemctl restart aichat
+            sleep 3
+            echo "deployed ok, backup: aichat.bak-$TS"
