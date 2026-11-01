@@ -138,30 +138,10 @@ func (w *wiring) fetchBalance(ctx context.Context, client *http.Client, t balanc
 	}
 	observability.RecordBalance(t.provider, snap)
 	observability.MarkBalanceUpdated(t.provider, w.clk.Now())
-
-	total, unit := balanceTotal(snap)
-	attrs := []any{"provider", t.provider, "unit", unit, "total", total, "available", snap.Available}
-	if snap.Note != "" {
-		attrs = append(attrs, "note", snap.Note)
-	}
-	w.logger.Info("账户余额已更新", attrs...)
+	// 成功路径不打日志：金额属于账户信息，journald 会长期留存、还会被采集，
+	// 没必要为了"看得见"把它写进去。余额看 aichat_balance 指标，
+	// 是否断更看 aichat_balance_updated_timestamp_seconds。
 	return nil
-}
-
-// balanceTotal 取快照里 kind=total 的那条（日志用）。
-//
-// 没有 total 就退第一条：宁可打一个非 total 的数，也不要打 0——
-// 0 在日志里会被读成「没钱了」，而实际只是口径没对上。
-func balanceTotal(snap *balance.Snapshot) (float64, string) {
-	for _, e := range snap.Entries {
-		if e.Kind == balance.KindTotal {
-			return e.Value, string(e.Unit)
-		}
-	}
-	if len(snap.Entries) > 0 {
-		return snap.Entries[0].Value, string(snap.Entries[0].Unit)
-	}
-	return 0, ""
 }
 
 // balanceProviderNames 返回已支持的 provider（排序后拼成 "a/b"），
