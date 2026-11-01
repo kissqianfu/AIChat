@@ -153,6 +153,7 @@ type ModelRef struct {
 	//   tts              elevenlabs（默认，pcm_24000 → silk）| breeze（同形，mp3 直传）；
 	//   imagegen         openai（默认，/images/generations）| qianwen（百炼原生
 	//                    multimodal-generation；注意它**不在** compatible-mode 下）；
+	//   embed            openai（默认，/embeddings；第三方兼容端点写 base_url 覆盖）；
 	//   search           deepseek（默认，官方 tools/search + tools/fetch）。
 	//
 	// 它决定「谁家的哪个接口来干活」（internal/llm/provider 按 (能力, 协议) 查各家

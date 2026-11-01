@@ -11,7 +11,8 @@ import (
 // 改这里就行，不用牵连其他接口。
 const DefaultEmbedBaseURL = "https://api.openai.com/v1"
 
-// embedder 把 Client.Embed 接成 port.Embedder（provider 注册表构造用）。
+// embedder 是 port.Embedder 的 OpenAI 兼容实现（/embeddings，批量；
+// 供记忆向量回填与召回 query 向量化使用，provider 注册表构造）。
 type embedder struct {
 	client *Client
 	model  string
@@ -19,13 +20,7 @@ type embedder struct {
 
 // Embed 实现 port.Embedder（批量）。
 func (e *embedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	return e.client.Embed(ctx, e.model, texts)
-}
-
-// Embed 生成文本向量（/embeddings，批量；OpenAI 兼容端点通用）。
-// 供记忆向量回填与召回 query 向量化使用（models.embed 槽位）。
-func (c *Client) Embed(ctx context.Context, model string, texts []string) ([][]float32, error) {
-	raw, err := c.do(ctx, "/embeddings", map[string]any{"model": model, "input": texts})
+	raw, err := e.client.do(ctx, "/embeddings", map[string]any{"model": e.model, "input": texts})
 	if err != nil {
 		return nil, err
 	}

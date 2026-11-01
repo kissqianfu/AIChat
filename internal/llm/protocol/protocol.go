@@ -14,7 +14,7 @@ import "strings"
 const (
 	// DeepSeek 是 DeepSeek 官方（对话/视觉/联网搜索）。
 	DeepSeek = "deepseek"
-	// OpenAI 是 OpenAI 兼容协议（对话、图像生成、语音识别）。
+	// OpenAI 是 OpenAI 兼容协议（对话、图像生成、语音识别、向量化）。
 	OpenAI = "openai"
 	// Qianwen 是通义千问（对话与 ASR 都走 OpenAI 兼容 + input_audio）。
 	Qianwen = "qianwen"
