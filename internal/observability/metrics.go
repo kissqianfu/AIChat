@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/kissqianfu/aichat/internal/billing"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 )
@@ -92,6 +93,25 @@ var (
 		Name: "aichat_deepseek_balance_errors_total",
 		Help: "余额查询失败数（鉴权/网络/接口变更；看板余额断更先看这里）",
 	})
+	// 余额时间戳：告警判断「余额数据是否停更」用。余额本身可以是稳定值，
+	// 光看它是看不出「查询已经挂了三天」的——而余额停了恰恰意味着余额告警失效。
+	deepseekBalanceAt = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "aichat_deepseek_balance_updated_timestamp_seconds",
+		Help: "余额最近一次成功查询的 Unix 时间戳（秒）",
+	})
+	// 计费（2026-11-01）：按 protocol 分账的估算额度。它是「估算」，不是账单——
+	// 对账看上面的官方余额。unit 是计量单位：CNY / USD / credit（积分），
+	// 不同 unit 的数值不能相加，看板要分行展示。
+	billingAmount = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_billing_amount_total",
+		Help: "按协议估算的计费额（unit: CNY/USD/credit；不同 unit 不可相加）",
+	}, []string{"protocol", "slot", "unit"})
+	// 算不出钱的调用：价目表没这个模型、厂商没报用量、或该 protocol 没装规则。
+	// 只要这个数在涨，说明计费口径有缺口，别当成「免费」。
+	billingUnpriced = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_billing_unpriced_total",
+		Help: "无法计价的调用数（reason: no_rater/no_usage/no_price）",
+	}, []string{"protocol", "slot", "reason"})
 	queueDepth = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "aichat_queue_depth",
 		Help: "事件管道队列深度",
@@ -210,6 +230,9 @@ func SetBalanceAvailable(ok bool) {
 	deepseekAvailable.Set(0)
 }
 
+// MarkBalanceUpdated 记录余额最近一次成功查询的时刻（告警用它判「数据断更」）。
+func MarkBalanceUpdated(at time.Time) { deepseekBalanceAt.Set(float64(at.Unix())) }
+
 // CountBalanceError 计数余额查询失败。
 func CountBalanceError() { deepseekBalanceErrors.Inc() }
 
@@ -250,10 +273,43 @@ func addTokens(slot LLMSlot, promptTok, completionTok, cachedTok int) {
 // MetricsHandler 返回 /metrics 的 handler。
 func MetricsHandler() http.Handler { return promhttp.Handler() }
 
+// ModelInfo 标识一个被装饰的模型：槽位（看哪条链路）+ 协议（用哪张价目表）+ 模型名。
+//
+// 三者缺一不可：只有槽位算不出钱（同一槽位的 primary/fallback 可能是不同模型），
+// 只有模型名分不出链路（vision 与 chat.fast 可能都跑 flash）。
+type ModelInfo struct {
+	Slot     LLMSlot
+	Protocol string
+	Model    string
+}
+
+// RecordBilling 记一次计费（对话与工具类共用同一个出口）。
+//
+// 算不出钱时只记 unpriced 计数、不写金额——把「没算出来」和「花了 0 元」分开，
+// 否则价目表缺一行就会静默地把开销吞掉。
+func RecordBilling(info ModelInfo, u billing.Usage, at time.Time) {
+	c := billing.Rate(info.Protocol, u, at)
+	if !c.Known {
+		billingUnpriced.WithLabelValues(info.Protocol, string(info.Slot), c.Reason).Inc()
+		return
+	}
+	billingAmount.WithLabelValues(info.Protocol, string(info.Slot), string(c.Unit)).Add(c.Amount)
+}
+
+// CountToolBilling 记一次工具类计费（搜索/抓取等按次消耗）。
+// protocol 由工具槽位的配置决定（search 槽位通常是 deepseek）。
+func CountToolBilling(protocol string, kind billing.UsageKind, requests int) {
+	if requests <= 0 {
+		return
+	}
+	RecordBilling(ModelInfo{Slot: LLMSlot(kind), Protocol: protocol},
+		billing.Usage{Kind: kind, Requests: requests}, metricClock.Now())
+}
+
 // instrumentedChatModel 给槽位模型套打点装饰（registry.ChatModel 出口统一包）。
 type instrumentedChatModel struct {
 	inner port.ChatModel
-	slot  LLMSlot
+	info  ModelInfo
 }
 
 func (m *instrumentedChatModel) Chat(ctx context.Context, req port.ChatRequest) (*port.ChatResponse, error) {
@@ -261,41 +317,57 @@ func (m *instrumentedChatModel) Chat(ctx context.Context, req port.ChatRequest) 
 	resp, err := m.inner.Chat(ctx, req)
 	elapsed := metricClock.Now().Sub(start)
 	if err != nil {
-		CountLLMError(m.slot)
-		ObserveLLMCall(m.slot, -1, -1, -1, elapsed)
+		CountLLMError(m.info.Slot)
+		ObserveLLMCall(m.info.Slot, -1, -1, -1, elapsed)
 		return resp, err
 	}
 	if resp == nil {
-		ObserveLLMCall(m.slot, -1, -1, -1, elapsed)
+		ObserveLLMCall(m.info.Slot, -1, -1, -1, elapsed)
 		return resp, nil
 	}
-	ObserveLLMCall(m.slot, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.CachedTokens, elapsed)
+	ObserveLLMCall(m.info.Slot, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.CachedTokens, elapsed)
+	recordChatBilling(m.info, resp.Usage, start)
 	return resp, err
 }
 
-// Stream 对流式调用记次数与建流耗时，并用 usageTapStream 在收流末尾补 token。
+// Stream 对流式调用记次数与建流耗时，并用 usageTapStream 在收流末尾补 token 与计费。
 //
 // 私聊回复走的就是这条路径（orchestrator.streamTee 把 Chat 换成 Stream），
-// 不在这里补 token 的话，主力场景的用量与费用会整块缺失。
+// 不在这里补的话，主力场景的用量与花费会整块缺失。
 func (m *instrumentedChatModel) Stream(ctx context.Context, req port.ChatRequest) (port.ChatStream, error) {
 	start := metricClock.Now()
 	stream, err := m.inner.Stream(ctx, req)
-	ObserveLLMCall(m.slot, -1, -1, -1, metricClock.Now().Sub(start))
+	ObserveLLMCall(m.info.Slot, -1, -1, -1, metricClock.Now().Sub(start))
 	if err != nil {
-		CountLLMError(m.slot)
+		CountLLMError(m.info.Slot)
 		return stream, err
 	}
-	return &usageTapStream{inner: stream, slot: m.slot}, nil
+	return &usageTapStream{inner: stream, info: m.info}, nil
 }
 
-// usageTapStream 透传流并在遇到带 usage 的增量时补记 token 与费用。
+// recordChatBilling 按 token 用量记账（token 全为 0 时不记：流被提前中断的
+// 情况拿不到用量，记 no_usage 没有信息量，反而会把 unpriced 曲线顶起来）。
+func recordChatBilling(info ModelInfo, u port.TokenUsage, at time.Time) {
+	if u.PromptTokens <= 0 && u.CompletionTokens <= 0 {
+		return
+	}
+	RecordBilling(info, billing.Usage{
+		Kind:             billing.KindChat,
+		Model:            info.Model,
+		PromptTokens:     u.PromptTokens,
+		CachedTokens:     u.CachedTokens,
+		CompletionTokens: u.CompletionTokens,
+	}, at)
+}
+
+// usageTapStream 透传流并在遇到带 usage 的增量时补记 token 与计费。
 //
 // 厂商的 include_usage 只在收流末尾那一帧给用量；若调用方提前 break 并
 // Close（如按长度截断收流），该次用量拿不到，只留下次数与耗时——属已知
 // 的偏低场景，不额外补猜。
 type usageTapStream struct {
 	inner port.ChatStream
-	slot  LLMSlot
+	info  ModelInfo
 	taken bool // 已记过用量（只认第一次带 usage 的帧）
 }
 
@@ -304,7 +376,8 @@ func (s *usageTapStream) Recv() (port.Delta, error) {
 	if !s.taken && delta.Usage != nil {
 		s.taken = true
 		u := delta.Usage
-		addTokens(s.slot, u.PromptTokens, u.CompletionTokens, u.CachedTokens)
+		addTokens(s.info.Slot, u.PromptTokens, u.CompletionTokens, u.CachedTokens)
+		recordChatBilling(s.info, *u, metricClock.Now())
 	}
 	return delta, err
 }
@@ -312,6 +385,6 @@ func (s *usageTapStream) Recv() (port.Delta, error) {
 func (s *usageTapStream) Close() error { return s.inner.Close() }
 
 // InstrumentChatModel 给模型套槽位打点装饰（registry 包内部使用）。
-func InstrumentChatModel(model port.ChatModel, slot LLMSlot) port.ChatModel {
-	return &instrumentedChatModel{inner: model, slot: slot}
+func InstrumentChatModel(model port.ChatModel, info ModelInfo) port.ChatModel {
+	return &instrumentedChatModel{inner: model, info: info}
 }

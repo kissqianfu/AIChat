@@ -140,10 +140,19 @@ type ModelRef struct {
 	BaseURL    string `yaml:"base_url"`
 	APIKeyName string `yaml:"api_key_name"` // → api_key 表的 name
 	Model      string `yaml:"model"`
-	// Protocol 是接口协议（仅能力槽位消费）：
-	//   asr 槽位  openai（默认）/ qianwen（千问系 chat/completions + input_audio）；
-	//   tts 槽位  elevenlabs（默认，pcm_24000 → silk）/ breeze（ElevenLabs 同形，mp3 直传免 silk）。
-	//   其余槽位忽略；registry 校验非法值。
+	// Protocol 是「谁家的模型」，被所有槽位消费（2026-11-01）：
+	//   chat.* / vision  deepseek（默认）| openai | qianwen —— 三家对话接口都是
+	//                    OpenAI 兼容的 Chat Completions，共用一套实现，差异只在
+	//                    base_url 与计费口径；
+	//   asr              openai（默认）| qianwen（chat/completions + input_audio）；
+	//   tts              elevenlabs（默认，pcm_24000 → silk）| breeze（同形，mp3 直传）；
+	//   imagegen         openai（默认）；
+	//   search           deepseek（默认，官方 tools/search + tools/fetch）。
+	//
+	// 它同时决定「用谁家客户端」（internal/llm/adapter）与「按哪张价目表算钱」
+	// （internal/billing），词表在 internal/llm/protocol；非法值由 registry 拒绝。
+	// 留空 = 该槽位默认协议。base_url 留空时用协议默认端点（search/asr/tts/imagegen
+	// 的 base_url 仍按老规矩：空 = 该能力关闭）。
 	Protocol string `yaml:"protocol,omitempty"`
 	Voice    string `yaml:"voice,omitempty"` // 仅 tts 槽位：留空 = TTS 关闭
 	Size     string `yaml:"size,omitempty"`  // 仅 imagegen 槽位

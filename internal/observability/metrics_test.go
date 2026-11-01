@@ -135,7 +135,7 @@ func TestNewMetrics(t *testing.T) {
 
 func TestInstrumentChatModelRecords(t *testing.T) {
 	inner := &fakeChatModel{resp: fakeResp("hi", 12, 3)}
-	m := InstrumentChatModel(inner, SlotChatStrong)
+	m := InstrumentChatModel(inner, ModelInfo{Slot: SlotChatStrong, Protocol: "test-vendor", Model: "test-model"})
 	if _, err := m.Chat(t.Context(), fakeReq()); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -146,7 +146,7 @@ func TestInstrumentChatModelRecords(t *testing.T) {
 		t.Fatalf("llm_tokens_total{chat.strong,completion} = %v, want 3", got)
 	}
 	// 调用失败要计入 llm_errors（ASR/TTS/画图失败率依赖这个）。
-	failing := InstrumentChatModel(&failChatModel{}, SlotVision)
+	failing := InstrumentChatModel(&failChatModel{}, ModelInfo{Slot: SlotVision, Protocol: "test-vendor", Model: "test-model"})
 	if _, err := failing.Chat(t.Context(), fakeReq()); err == nil {
 		t.Fatal("failChatModel 应返回错误")
 	}
@@ -209,7 +209,7 @@ func TestStreamUsageTapRecordsTokens(t *testing.T) {
 		{Content: "你"},
 		{Content: "好", Usage: usage},
 		{FinishReason: "stop", Usage: usage}, // 后续帧不再重复计
-	}}, SlotVision)
+	}}, ModelInfo{Slot: SlotVision, Protocol: "test-vendor", Model: "test-model"})
 
 	beforeTok := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenPrompt)))
 	beforeCached := testutil.ToFloat64(llmTokensTotal.WithLabelValues(string(SlotVision), string(TokenCached)))

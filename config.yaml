@@ -87,38 +87,45 @@ balance:
   interval_minutes: 10
 
 # 模型槽位（2026-10-31 由 models.yaml 并入，docs/08 §2.5）：
-# 每个引用自带 base_url 与 api_key_name（→ api_key 表的 name），不再有 providers 中转。
-# 能力槽位可选 protocol：asr = openai（默认）/ qianwen；tts = elevenlabs（默认）/ breeze（mp3 直传免 silk）。
-# 对话/视觉槽位走 OpenAI 兼容协议；asr/imagegen/tts 的 base_url 留空 = 该能力关闭。${ENV} 会展开。
+# 每个引用自带 protocol、base_url 与 api_key_name（→ api_key 表的 name），不再有 providers 中转。
+#
+# protocol 是「谁家的模型」，同时决定两件事（2026-11-01）：
+#   1. 用哪家客户端/端点：deepseek | openai | qianwen 三家对话接口都是 OpenAI 兼容，
+#      共用一套实现；base_url 留空 = 用该 protocol 的官方默认端点。
+#      asr: openai(默认)/qianwen；tts: elevenlabs(默认)/breeze；imagegen: openai；search: deepseek。
+#   2. 用哪张价目表算钱：deepseek 的价目在 internal/billing/deepseek（峰谷两档 ×2、
+#      搜索/抓取 5 元/千次）。没登记计费规则的 protocol 会记 unpriced 指标，不会静默按 0 元。
+# asr/imagegen/tts 的 base_url 留空 = 该能力关闭。${ENV} 会展开。
 # 热加载：改本段后 1s 内生效（失败保留旧版），/reload 也可手动触发（保留 5 层快照可回滚）。
 models:
   # 对话槽位（复杂度判别与插话打分也用 chat.fast）
   chat:   
     # 日常闲聊；默认槽位
     fast:                         
-      primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
+      primary: { protocol: deepseek, base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
     # 复杂推理/长文
     strong:                       
-      primary: { base_url: https://api.deepseek.com, model: deepseek-v4-pro, api_key_name: deepseek }
+      primary: { protocol: deepseek, base_url: https://api.deepseek.com, model: deepseek-v4-pro, api_key_name: deepseek }
 
   # 视觉理解：DeepSeek 只有 flash 支持图片（且图片只能出现在 user 消息）
   vision:
-    primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
+    primary: { protocol: deepseek, base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
 
   
   # 语音识别 base_url 留空 = 该能力关闭
   asr:
-    primary: { base_url: "", model: whisper-1, api_key_name: openai }
-  # 语音合成 base_url 留空 = 该能力关闭
+    primary: { protocol: openai, base_url: "", model: whisper-1, api_key_name: openai }
+  # 语音合成 base_url 留空 = 该能力关闭（breeze 需 voice 与 base_url 同时填）
   tts:
-    primary: { base_url: "", model: eleven_turbo_v2_5, voice: "", api_key_name: elevenlabs }
+    primary: { protocol: elevenlabs, base_url: "", model: eleven_turbo_v2_5, voice: "", api_key_name: elevenlabs }
   # 图像生成 base_url 留空 = 该能力关闭
   imagegen:
-    primary: { base_url: "", model: dall-e-3, size: 1024x1024, api_key_name: openai }
-  # 联网搜索（web_search）/抓取（web_fetch）：无需 model 名；base_url 留空 = 默认 api.deepseek.com + 密钥 deepseek。
-  # protocol: deepseek = web_fetch 走官方 Fetch 接口（服务端渲染 + Markdown，¥5/千次，失败自动回退直连）
+    primary: { protocol: openai, base_url: "", model: dall-e-3, size: 1024x1024, api_key_name: openai }
+  # 联网搜索（web_search）/抓取（web_fetch）：无需 model 名。
+  # protocol: deepseek = web_fetch 走官方 Fetch 接口（服务端渲染 + Markdown，¥5/千次，
+  # 失败自动回退直连），搜索/抓取按次计费也按 deepseek 价目算。
   search:
-    primary: { base_url: https://api.deepseek.com, api_key_name: deepseek, protocol: deepseek }
+    primary: { protocol: deepseek, base_url: https://api.deepseek.com, api_key_name: deepseek }
 
 
 # 配置级灰度开关（M4-6）：改这里 + 重启即可关掉某能力

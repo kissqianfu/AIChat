@@ -4,10 +4,11 @@ package bootstrap
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/kissqianfu/aichat/internal/cache"
 	"github.com/kissqianfu/aichat/internal/limits"
+	"github.com/kissqianfu/aichat/internal/llm/adapter"
+	"github.com/kissqianfu/aichat/internal/llm/protocol"
 	"github.com/kissqianfu/aichat/internal/media"
 	"github.com/kissqianfu/aichat/internal/orchestrator"
 	"github.com/kissqianfu/aichat/internal/port"
@@ -43,19 +44,25 @@ func (w *wiring) buildToolbox(ctx context.Context) error {
 	if err := toolbox.Register(tools.NewCalculatorTool()); err != nil {
 		return fmt.Errorf("bootstrap: 注册计算工具: %w", err)
 	}
-	// 联网搜索（2026-10-31）：models.search 槽位配置 base_url/api_key_name；
+	// 联网搜索（2026-10-31）：models.search 槽位配置 base_url/api_key_name/protocol；
 	// 槽位缺失或 base_url 为空 = 沿用历史默认（api.deepseek.com + 密钥 deepseek）。
-	// protocol: deepseek 时 web_fetch 走官方 Fetch 接口（服务端渲染 + Markdown，失败回退直连）。
-	searchBaseURL, searchKeyName := "", "deepseek"
-	if ref, ok := w.reg.SlotModel("search"); ok && ref.BaseURL != "" {
-		searchBaseURL, searchKeyName = ref.BaseURL, ref.APIKeyName
+	// protocol 决定两件事：web_fetch 是否走官方 Fetch 接口（deepseek = 走，服务端渲染
+	// + Markdown，失败回退直连），以及搜索/抓取按哪张价目表计费（internal/billing）。
+	searchBaseURL, searchKeyName, searchProtocol := "", "deepseek", protocol.DeepSeek
+	if ref, ok := w.reg.SlotModel("search"); ok {
+		if ref.BaseURL != "" {
+			searchBaseURL, searchKeyName = ref.BaseURL, ref.APIKeyName
+		}
+		if p := adapter.ProtocolOf(ref.Protocol); p != "" {
+			searchProtocol = p
+		}
 	}
 	searchKey := func(ctx context.Context) (string, error) { return w.keyRepo.Key(ctx, searchKeyName) }
 	fetchBackend := tools.FetchBackend(nil)
-	if ref, ok := w.reg.SlotModel("search"); ok && strings.EqualFold(strings.TrimSpace(ref.Protocol), "deepseek") {
-		fetchBackend = tools.NewDeepseekFetch(searchKey, searchBaseURL, nil)
+	if searchProtocol == protocol.DeepSeek {
+		fetchBackend = tools.NewDeepseekFetch(searchKey, searchBaseURL, searchProtocol, nil)
 	}
-	if err := toolbox.Register(tools.NewSearchTool(searchKey, searchBaseURL, nil)); err != nil {
+	if err := toolbox.Register(tools.NewSearchTool(searchKey, searchBaseURL, searchProtocol, nil)); err != nil {
 		return fmt.Errorf("bootstrap: 注册搜索工具: %w", err)
 	}
 	if err := toolbox.Register(tools.NewWebFetchToolWithBackend(fetchBackend, nil)); err != nil {

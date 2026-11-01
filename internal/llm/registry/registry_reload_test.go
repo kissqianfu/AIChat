@@ -63,8 +63,10 @@ func TestRegistryReloadInvalidKeepsOld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	// 非法段（chat 槽位缺 base_url）→ 校验失败，保留旧版。
-	invalid := "models:\n  chat:\n    fast: {primary: {base_url: \"\", model: m}}\n"
+	// 非法段（chat 槽位 model 名为空）→ 校验失败，保留旧版。
+	// 注意不能用「base_url 为空」当非法：2026-11-01 起对话槽位允许省略 base_url，
+	// 由 protocol 的默认端点兜底。
+	invalid := "models:\n  chat:\n    fast: {primary: {base_url: x, model: \"\"}}\n"
 	if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
 		t.Fatal(err)
 	}

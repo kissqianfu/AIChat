@@ -103,8 +103,7 @@ func TestLoadValidationErrors(t *testing.T) {
 		{name: "empty models", cfg: "models: {}\n", want: "models 段不能为空"},
 		{name: "missing chat.fast", cfg: "models: {chat: {other: {primary: {base_url: x, model: m}}}}\n", want: "缺少默认槽位"},
 		{name: "empty model", cfg: "models: {chat: {fast: {primary: {base_url: x, model: \"\"}}}}\n", want: "空 model"},
-		{name: "empty chat base_url", cfg: "models: {chat: {fast: {primary: {base_url: \"\", model: m}}}}\n", want: "base_url 不能为空"},
-		{name: "empty vision base_url", cfg: "models: {chat: {fast: {primary: {base_url: x, model: m}}}, vision: {primary: {base_url: \"\", model: m}}}\n", want: "vision"},
+		{name: "unknown protocol", cfg: "models: {chat: {fast: {primary: {base_url: x, model: m, protocol: some-vendor}}}}\n", want: "不支持 protocol"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -163,8 +162,12 @@ func TestProtocolValidation(t *testing.T) {
 			cfg:  "models: {chat: {fast: {primary: {base_url: x, model: m}}}, tts: {primary: {base_url: u, model: breeze-tts-2, voice: voc_x, protocol: breeze}}}\n",
 		},
 		{
-			name: "chat 槽位不允许 protocol",
+			name: "chat 槽位可用 qianwen（OpenAI 兼容）",
 			cfg:  "models: {chat: {fast: {primary: {base_url: x, model: m, protocol: qianwen}}}}\n",
+		},
+		{
+			name: "chat 槽位不认识 elevenlabs",
+			cfg:  "models: {chat: {fast: {primary: {base_url: x, model: m, protocol: elevenlabs}}}}\n",
 			want: "不支持 protocol",
 		},
 		{

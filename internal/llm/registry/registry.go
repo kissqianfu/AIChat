@@ -21,7 +21,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/kissqianfu/aichat/internal/config"
-	"github.com/kissqianfu/aichat/internal/llm/deepseek"
+	"github.com/kissqianfu/aichat/internal/llm/adapter"
+	"github.com/kissqianfu/aichat/internal/llm/protocol"
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 	"github.com/kissqianfu/aichat/internal/port"
@@ -141,38 +142,32 @@ func validateModels(m config.ModelsConfig) (map[string]Slot, error) {
 			if name != "search" && strings.TrimSpace(ref.Model) == "" {
 				return nil, fmt.Errorf("registry: 槽位 %q 有空 model 名", name)
 			}
-			// 对话/视觉槽位必须给 base_url；能力槽位（asr/tts/imagegen/search）空 base_url = 关闭/默认。
-			if strings.TrimSpace(ref.BaseURL) == "" && (strings.HasPrefix(name, "chat.") || name == "vision") {
-				return nil, fmt.Errorf("registry: 槽位 %q 的 base_url 不能为空", name)
-			}
+			// protocol 先校验：写歪了要直接报「不认识这个协议」，
+			// 而不是绕到 base_url 那一层给出误导性的错误。
 			if err := validateProtocol(name, ref.Protocol); err != nil {
 				return nil, err
+			}
+			// 对话/视觉槽位没写 base_url 时由 protocol 的默认端点兜底（adapter.DefaultBaseURL）。
+			if strings.TrimSpace(ref.BaseURL) == "" && protocol.IsChat(name) &&
+				adapter.DefaultBaseURL(protocol.Normalize(ref.Protocol)) == "" {
+				return nil, fmt.Errorf("registry: 槽位 %q 既没有 base_url 也没有可用的 protocol（%q）",
+					name, ref.Protocol)
 			}
 		}
 	}
 	return slots, nil
 }
 
-// validateProtocol 校验能力槽位的 protocol 值（大小写不敏感；空 = 各槽位默认）。
-// asr: openai（默认）/ qianwen；tts: elevenlabs（默认）/ breeze；search: deepseek（官方 Fetch 后端）。
-func validateProtocol(slot, protocol string) error {
-	switch strings.ToLower(strings.TrimSpace(protocol)) {
-	case "":
+// validateProtocol 校验槽位的 protocol 取值（大小写不敏感；空 = 该槽位默认）。
+//
+// 词表在 internal/llm/protocol：它同时被 adapter（选客户端）与 billing（选价目表）
+// 消费，所以这里不再维护第二份规则。
+func validateProtocol(slot, p string) error {
+	if protocol.Valid(slot, p) {
 		return nil
-	case "openai", "qianwen":
-		if slot == "asr" {
-			return nil
-		}
-	case "elevenlabs", "breeze":
-		if slot == "tts" {
-			return nil
-		}
-	case "deepseek":
-		if slot == "search" {
-			return nil
-		}
 	}
-	return fmt.Errorf("registry: 槽位 %q 不支持 protocol %q（asr: openai/qianwen；tts: elevenlabs/breeze；search: deepseek）", slot, protocol)
+	return fmt.Errorf("registry: 槽位 %q 不支持 protocol %q（可选：%s）",
+		slot, p, protocol.Allowed(slot))
 }
 
 // chainOf 取依赖槽位的 primary + fallbacks（用于组装固定回退链）；槽位不存在返回空。
@@ -267,28 +262,34 @@ func (r *Registry) ChatModel(ctx context.Context, slot string) (port.ChatModel, 
 		if ref.Thinking {
 			model = forcedThinking{inner: model}
 		}
-		// Prometheus 打点装饰（2026-11-01）：按槽位记调用数/耗时/token。
-		// 槽位名来自配置（运行时字符串），转成 observability 的强类型 label。
-		model = observability.InstrumentChatModel(model, observability.LLMSlot(slot))
+		// Prometheus 打点装饰（2026-11-01）：按槽位记调用数/耗时/token，
+		// 并按 protocol 取价目表算钱（计费口径见 internal/billing）。
+		model = observability.InstrumentChatModel(model, observability.ModelInfo{
+			Slot:     observability.LLMSlot(slot),
+			Protocol: adapter.ProtocolOf(ref.Protocol),
+			Model:    ref.Model,
+		})
 		models = append(models, model)
 		names = append(names, ref.BaseURL+"/"+ref.Model)
 	}
 	return &chain{models: models, names: names}, nil
 }
 
-// build 构造单个模型（调用方持有读锁）。对话/视觉槽位统一走 OpenAI 兼容协议
-// （deepseek 客户端即 OpenAI 兼容实现，换端点只改 base_url）。
+// build 构造单个模型（调用方持有读锁）。对话/视觉槽位按 protocol 分派到
+// adapter——deepseek / openai / qianwen 共用 OpenAI 兼容实现，差异在 base_url；
+// 计费同样按这个 protocol 取价目表（observability 装饰器里做）。
 func (r *Registry) build(ctx context.Context, slot string, ref ModelRef) (port.ChatModel, error) {
 	key, err := r.opts.Key(ctx, ref.APIKeyName)
 	if err != nil {
 		return nil, fmt.Errorf("registry: slot %q 取 key %q: %w", slot, ref.APIKeyName, err)
 	}
-	return deepseek.New(deepseek.Config{
-		APIKey:  key,
-		BaseURL: ref.BaseURL,
-		Model:   ref.Model,
-		HTTP:    r.opts.HTTP,
-		Logger:  r.opts.Logger,
+	return adapter.NewChat(adapter.ChatParams{
+		Protocol: ref.Protocol,
+		APIKey:   key,
+		BaseURL:  ref.BaseURL,
+		Model:    ref.Model,
+		HTTP:     r.opts.HTTP,
+		Logger:   r.opts.Logger,
 	})
 }
 

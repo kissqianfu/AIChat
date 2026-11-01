@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/billing"
+	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
 	"github.com/kissqianfu/aichat/internal/port"
 	"github.com/kissqianfu/aichat/internal/safety"
@@ -31,19 +33,29 @@ const (
 type SearchTool struct {
 	key     func(ctx context.Context) (string, error)
 	baseURL string
-	http    *http.Client
-	count   int
+	// protocol 决定按哪张价目表计费（models.search.protocol，默认 deepseek）。
+	protocol string
+	http     *http.Client
+	count    int
 }
 
 // NewSearchTool 构造搜索工具；key 回调每次调用时取（key 轮换无需重启）。
-func NewSearchTool(key func(ctx context.Context) (string, error), baseURL string, client *http.Client) *SearchTool {
+// protocol 空串按 deepseek 处理（官方搜索接口只有这一家）。
+func NewSearchTool(key func(ctx context.Context) (string, error), baseURL, protocol string, client *http.Client) *SearchTool {
 	if baseURL == "" {
 		baseURL = DefaultSearchBaseURL
+	}
+	if strings.TrimSpace(protocol) == "" {
+		protocol = "deepseek"
 	}
 	if client == nil {
 		client = httpclient.New(10 * time.Second)
 	}
-	return &SearchTool{key: key, baseURL: strings.TrimRight(baseURL, "/"), http: client, count: defaultSearchCount}
+	return &SearchTool{
+		key: key, baseURL: strings.TrimRight(baseURL, "/"),
+		protocol: strings.ToLower(strings.TrimSpace(protocol)),
+		http:     client, count: defaultSearchCount,
+	}
 }
 
 // Spec 实现 port.Tool。
@@ -118,6 +130,9 @@ func (s *SearchTool) Invoke(ctx context.Context, args json.RawMessage) (port.Too
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return port.ToolResult{}, fmt.Errorf("web_search: decode: %w", err)
 	}
+	// 计费打点（2026-11-01）：官方按「成功请求」计费，所以放在 200 + decode 成功之后；
+	// 没搜到结果也是一次成功请求，照记。失败路径不计费。
+	observability.CountToolBilling(s.protocol, billing.KindSearch, 1)
 	if len(parsed.Results) == 0 {
 		return port.ToolResult{Content: "没有搜索到结果"}, nil
 	}

@@ -1,11 +1,16 @@
 // balance.go：DeepSeek 账户余额查询（GET /user/balance，2026-11-01）。
 //
-// 为什么查余额而不是自己算花费：余额是官方真值，只随实际扣费变化，不需要维护
-// 单价表，也不会因为调价、峰谷窗口或单位换算出错。看板看两件事——
-// 「还剩多少钱」和「余额曲线下降的斜率」（即真实消耗速度）。
+// 余额与 token 计价是两条互补的口径：
+//   - 余额（本文件）：官方真值，只随实际扣费变化，用来对账、看「还剩多少」
+//     以及曲线下降的斜率（≈ 真实消耗速度）。它是告警的依据。
+//   - token 计价（deepseek.go）：按价目表估算，用来回答「哪个槽位/模型在花钱」，
+//     余额不区分槽位，只有估算能拆开。
+//
+// 两者的差额就是估算误差（峰谷判错、调价、缓存口径），对账以余额为准。
 //
 // 接口本身与 chat 槽位无关（账户级），所以这里是独立函数而不是 Model 的方法；
 // 密钥由调用方从 api_key 表读出传入。
+
 package deepseek
 
 import (
@@ -101,4 +106,13 @@ func (b BalanceInfo) Amount(field string) (float64, error) {
 		return 0, fmt.Errorf("deepseek: 金额 %q 不是数字: %w", raw, err)
 	}
 	return v, nil
+}
+
+// truncateForLog 截断错误响应体，避免把整页 HTML 灌进日志。
+func truncateForLog(body []byte) string {
+	const limit = 512
+	if len(body) <= limit {
+		return string(body)
+	}
+	return string(body[:limit]) + "..."
 }

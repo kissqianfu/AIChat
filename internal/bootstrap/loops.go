@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/kissqianfu/aichat/internal/llm/deepseek"
+	"github.com/kissqianfu/aichat/internal/billing/deepseek"
+	"github.com/kissqianfu/aichat/internal/llm/adapter"
+	"github.com/kissqianfu/aichat/internal/llm/protocol"
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
@@ -21,8 +23,8 @@ const balanceDefaultInterval = 10 * time.Minute
 
 // startBalanceLoop 定时查 DeepSeek 账户余额（2026-11-01）。
 //
-// 为什么是余额而不是自算花费：余额是官方扣费结果，不需要维护单价表，也不会因为
-// 调价、峰谷窗口、单位换算出错——那三件事已经让看板说过两次假话。
+// 余额是官方扣费结果，用来对账与告警（剩多少、掉多快）；token 计价是估算，
+// 用来拆「哪个槽位在花钱」——两套口径互补，见 internal/billing/deepseek。
 //
 // 端点与密钥默认跟随 models.chat.fast（一般就是同一个账户）；失败只计数与告警，
 // 不影响任何业务链路，也不重试（下一轮自然再查）。
@@ -45,7 +47,7 @@ func (w *wiring) startBalanceLoop(ctx context.Context) {
 		return
 	}
 	if baseURL == "" {
-		baseURL = deepseek.DefaultBaseURL
+		baseURL = adapter.DefaultBaseURL(protocol.DeepSeek)
 	}
 	interval := time.Duration(cfg.IntervalMinutes) * time.Minute
 	if interval <= 0 {
@@ -69,6 +71,7 @@ func (w *wiring) startBalanceLoop(ctx context.Context) {
 			observability.CountBalanceError()
 			return fmt.Errorf("余额响应没有 balance_infos（接口口径变化？）")
 		}
+		observability.MarkBalanceUpdated(w.clk.Now())
 		for _, info := range b.BalanceInfos {
 			total, err := info.Amount("total")
 			if err != nil {

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kissqianfu/aichat/internal/billing"
+	deepseekbilling "github.com/kissqianfu/aichat/internal/billing/deepseek"
 	"github.com/kissqianfu/aichat/internal/llm/elevenlabs"
 	"github.com/kissqianfu/aichat/internal/llm/registry"
 	"github.com/kissqianfu/aichat/internal/llm/router"
@@ -23,6 +25,10 @@ func (w *wiring) buildModels(ctx context.Context) error {
 	if w.cfg.SourcePath == "" {
 		return errors.New("bootstrap: 配置来源路径为空（模型注册表需要重读 config.yaml）")
 	}
+	// 计费规则注册（2026-11-01）：协议 → 价目表。billing 核心不认识任何厂商，
+	// 各家在自己的子模块里实现 Rater，在这里登记；漏登记只会让计费记 no_rater
+	// 并在看板上冒出来，不影响调用链路。
+	billing.Register(deepseekbilling.New())
 	reg, err := registry.Load(w.cfg.SourcePath, registry.Options{
 		Key:    w.keyRepo.Key,
 		Logger: w.logger,
