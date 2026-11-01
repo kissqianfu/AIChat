@@ -24,6 +24,14 @@ type Store struct {
 	log        *slog.Logger
 	inner      *hotreload.Store[*Persona]
 	watchEvery time.Duration // 测试可调小
+
+	// baseFP 是 NewStore 加载完成那一刻的文件指纹，作为 Watch 的比对基线。
+	//
+	// 不能在 Watch 里现取基线：如果文件在"NewStore 读完"到"Watch 取基线"之间
+	// 被改动，现取的基线会把这次改动当成初始状态，于是永远不重载——启动瞬间
+	// 改人设的窗口虽小，但测试里恰好必然命中（启动 goroutine 后立刻写文件），
+	// 表现为 Windows 过、Linux 挂的偶发失败。
+	baseFP string
 }
 
 // NewStore 首次加载并构造热加载容器；首启失败返回错误（调用方拒绝启动）。
@@ -39,7 +47,12 @@ func NewStore(cfg Config, logger *slog.Logger) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{cfg: cfg, log: logger, inner: inner, watchEvery: watchInterval}, nil
+	st := &Store{cfg: cfg, log: logger, inner: inner, watchEvery: watchInterval}
+	// 基线尽量贴近"刚读完文件"的时刻；stat 失败就留空，Watch 启动时再兜底取。
+	if fp, err := st.fingerprint(); err == nil {
+		st.baseFP = fp
+	}
+	return st, nil
 }
 
 // Current 返回当前生效的人设（恒非 nil）。
@@ -66,9 +79,14 @@ func (s *Store) Watch(ctx context.Context) {
 	if interval <= 0 {
 		interval = watchInterval
 	}
-	last, err := s.fingerprint()
-	if err != nil {
-		s.log.Warn("人设 watch 初始化失败，等文件就绪", "err", err)
+	// 基线用 NewStore 时记下的指纹；拿不到（当时 stat 失败）才现取一次。
+	last := s.baseFP
+	if last == "" {
+		fp, err := s.fingerprint()
+		if err != nil {
+			s.log.Warn("人设 watch 初始化失败，等文件就绪", "err", err)
+		}
+		last = fp
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

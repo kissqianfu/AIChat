@@ -106,3 +106,40 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("等待超时")
 }
+
+// TestStoreWatchSeesChangeMadeBeforeWatchStarts 锁住一个启动窗口的缺口。
+//
+// Watch 的比对基线必须取自 NewStore 加载完成那一刻，而不是 Watch 启动时现取。
+// 否则"NewStore 之后、Watch 起来之前"发生的改动会被当成初始状态，永远不重载。
+// 这个窗口在 Linux 上必然命中（测试起完 goroutine 立刻写文件），Windows 上因为
+// 写文件更慢反而常常躲过去——于是它在 CI 上暴露成"只有 Linux 挂"的偶发失败。
+func TestStoreWatchSeesChangeMadeBeforeWatchStarts(t *testing.T) {
+	dir := t.TempDir()
+	writePersona(t, dir, validBody, validMeta)
+	store, err := NewStore(testPersonaConfig(dir), nil)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	store.watchEvery = 5 * time.Millisecond
+
+	// 故意的顺序：先改文件，再启动 Watch。
+	const want = "# 身份\n你是「小七」。\n"
+	writePersona(t, dir, want, validMeta)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		store.Watch(ctx)
+	}()
+
+	waitFor(t, func() bool { return store.Current().Body == want })
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Watch 未随 ctx 退出")
+	}
+}
