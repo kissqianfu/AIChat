@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	llmdeepseek "github.com/kissqianfu/aichat/internal/llm/deepseek"
 )
 
 // balanceBody 是官方 GET /user/balance 的真实响应形状（金额为字符串）。
@@ -148,4 +150,33 @@ func containsAll(s string, subs ...string) bool {
 		}
 	}
 	return true
+}
+
+// balanceURL：余额不在 /v1 下（要剥），但 base_url 空着时不能拼出空 URL——
+// 线上踩过：配置改成 accounts 后 deepseek 那条 base_url 留空，
+// 结果请求打到 ""/user/balance，报 unsupported protocol scheme。
+func TestBalanceURL(t *testing.T) {
+	cases := []struct{ base, want string }{
+		{"", "https://api.deepseek.com/user/balance"},
+		{"  ", "https://api.deepseek.com/user/balance"},
+		{"https://api.deepseek.com", "https://api.deepseek.com/user/balance"},
+		{"https://api.deepseek.com/", "https://api.deepseek.com/user/balance"},
+		{"https://api.deepseek.com/v1", "https://api.deepseek.com/user/balance"},
+		{"https://api.deepseek.com/v1/", "https://api.deepseek.com/user/balance"},
+		{"https://proxy.example.com/deepseek/v1", "https://proxy.example.com/deepseek/user/balance"},
+	}
+	for _, c := range cases {
+		if got := balanceURL(c.base); got != c.want {
+			t.Fatalf("balanceURL(%q) = %q, want %q", c.base, got, c.want)
+		}
+	}
+}
+
+// 两个包各自声明了 DeepSeek 默认端点（billing 不 import llm，反之亦然）。
+// 这条断言就是防它们漂：改一边不改另一边，这里先红。
+func TestDefaultBaseURLMatchesLLM(t *testing.T) {
+	if DefaultBaseURL != llmdeepseek.DefaultBaseURL {
+		t.Fatalf("billing/deepseek.DefaultBaseURL = %q，与 llm/deepseek.DefaultBaseURL = %q 不一致",
+			DefaultBaseURL, llmdeepseek.DefaultBaseURL)
+	}
 }

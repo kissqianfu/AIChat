@@ -29,6 +29,13 @@ import (
 // balanceMaxBody 限制余额响应读取（这个响应很小，给 64KiB 富余）。
 const balanceMaxBody = 64 << 10
 
+// DefaultBaseURL 是余额接口的默认端点（配置里 base_url 留空时用它）。
+//
+// 与 internal/llm/deepseek.DefaultBaseURL 同值，但这里不 import 那个包：
+// 计费不该依赖调用栈（而且 adapter 已依赖 billing，反向 import 会成环）。
+// 两边是否漂移由 balance_test.go 的一条断言盯着。
+const DefaultBaseURL = "https://api.deepseek.com"
+
 // BalanceInfo 是单个币种的余额明细。
 //
 // 金额字段官方返回**字符串**（如 "110.00"），不用 float64 直读——币种金额走
@@ -57,7 +64,7 @@ func FetchBalance(ctx context.Context, client *http.Client, baseURL, apiKey stri
 	if client == nil {
 		return nil, errors.New("deepseek: 查询余额需要 http.Client")
 	}
-	url := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(baseURL), "/"), "/v1") + "/user/balance"
+	url := balanceURL(baseURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -84,6 +91,15 @@ func FetchBalance(ctx context.Context, client *http.Client, baseURL, apiKey stri
 		return nil, fmt.Errorf("deepseek: 解析余额响应: %w", err)
 	}
 	return &out, nil
+}
+
+// balanceURL 拼余额地址：余额不在 /v1 下，所以先剥尾部 /v1 再拼 /user/balance。
+// 留空走默认端点——配置里 base_url 空着就是「用官方的」，不该变成空 URL 请求。
+func balanceURL(baseURL string) string {
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = DefaultBaseURL
+	}
+	return strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(baseURL), "/"), "/v1") + "/user/balance"
 }
 
 // Amount 把官方返回的金额字符串解析成数值（打点用）。
