@@ -42,10 +42,18 @@ type Config struct {
 type Adapter struct {
 	client *api.Client
 	clock  clock.Clock
+	log    *slog.Logger
 
 	botMu  sync.Mutex
 	botIDs map[string]botIDEntry // group_openid → 本群 member_openid（bot_state 缓存）
 }
+
+// maxMediaSeqRetry 是富媒体撞去重后换 seq 重发的次数上限。
+//
+// 平台按 (msg_id, msg_seq) 判重，返回 40054005。对文本来说这表示"已经发出去了"，
+// 按成功处理没问题；对富媒体却相反——2026-11-01 首发语音即撞该码，实际一条都没发。
+// 换一个未用过的 seq 重发即可绕开去重键，两次仍失败就交给调用方记失败。
+const maxMediaSeqRetry = 2
 
 var _ port.Sender = (*Adapter)(nil)
 
@@ -67,7 +75,11 @@ func New(cfg Config) (*Adapter, error) {
 	if clk == nil {
 		clk = clock.System()
 	}
-	return &Adapter{client: client, clock: clk}, nil
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Adapter{client: client, clock: clk, log: logger}, nil
 }
 
 // Token 返回有效 access_token（WS Identify 用；缓存/刷新由 SDK 负责）。
@@ -94,7 +106,7 @@ func (a *Adapter) Send(ctx context.Context, target port.Target, out port.Outboun
 		return port.Result{}, err
 	}
 	res, err := a.client.Send(ctx, sdkTarget, msg)
-	return convertResult(res, err)
+	return a.convertResult(res, err)
 }
 
 // sendMedia 走"上传 → file_info → 发送富媒体"链路（M3-5/M7-3b）：
@@ -110,14 +122,61 @@ func (a *Adapter) sendMedia(ctx context.Context, target port.Target, out port.Ou
 	}
 	fileInfo, err := a.uploadMedia(ctx, sdkTarget, media)
 	if err != nil {
+		a.logSendFailure("富媒体上传失败", err, out, media.fileType, "file_size", mediaSize(media))
 		return port.Result{}, err
 	}
-	msg := send.Media(fileInfo)
-	if out.Anchor.MsgID != "" {
-		msg = msg.ReplyTo(out.Anchor.MsgID, out.Seq)
+	// 富媒体撞去重必须换 seq 重发：文本的 40054005 意味着"已发出"，媒体却相反。
+	for attempt := 0; ; attempt++ {
+		seq := out.Seq + attempt
+		msg := send.Media(fileInfo)
+		if out.Anchor.MsgID != "" {
+			msg = msg.ReplyTo(out.Anchor.MsgID, seq)
+		}
+		res, sendErr := a.client.Send(ctx, sdkTarget, msg)
+		if sendErr == nil {
+			if attempt > 0 {
+				a.log.Warn("富媒体换 seq 后发送成功",
+					"file_type", media.fileType, "want_seq", out.Seq, "used_seq", seq)
+			}
+			return port.Result{PlatformMsgID: res.ID, SentAt: res.Timestamp}, nil
+		}
+		duplicate := isDuplicate(sendErr)
+		a.logSendFailure("富媒体发送失败", sendErr, out, media.fileType,
+			"seq", seq, "attempt", attempt+1, "duplicate", duplicate)
+		if !duplicate || out.Anchor.MsgID == "" || attempt >= maxMediaSeqRetry {
+			return port.Result{}, sendErr
+		}
 	}
-	res, err := a.client.Send(ctx, sdkTarget, msg)
-	return convertResult(res, err)
+}
+
+// isDuplicate 判定平台是否按 (msg_id, msg_seq) 判了重复。
+func isDuplicate(err error) bool {
+	var apiErr *apierr.APIError
+	return errors.As(err, &apiErr) && apiErr.IsDuplicate()
+}
+
+// logSendFailure 记录一次发送失败：平台错误码/消息/trace 一并落盘。
+//
+// 此前 adapter 把错误整体交给上层，而 40054005 会被转成"发送成功"，
+// 日志里连一行都留不下——2026-11-01 语音静默丢失正是这么发生的。
+func (a *Adapter) logSendFailure(msg string, err error, out port.Outbound, fileType int, extra ...any) {
+	args := []any{"intent", out.Intent, "want_seq", out.Seq, "file_type", fileType, "anchor_msg_id", out.Anchor.MsgID}
+	args = append(args, extra...)
+	var apiErr *apierr.APIError
+	if errors.As(err, &apiErr) {
+		args = append(args,
+			"code", apiErr.Code, "http", apiErr.HTTP,
+			"api_msg", apiErr.Message, "trace", apiErr.TraceID)
+	}
+	a.log.Warn(msg, append(args, "err", err)...)
+}
+
+// mediaSize 返回待发送媒体的字节数（排障时区分"空文件"与"平台拒绝"）。
+func mediaSize(m mediaPayload) int {
+	if m.audioOK {
+		return len(m.audio.Data)
+	}
+	return len(m.image.Data)
 }
 
 // mediaPayload 是一条待发送的媒体（图片或语音二选一）。
@@ -184,11 +243,17 @@ func imageExt(mime string) string {
 }
 
 // convertResult 把 SDK 结果/重复错误转成 port.Result。
-func convertResult(res *api.Result, err error) (port.Result, error) {
+//
+// 文本的 40054005 是"这条已经发过"，按成功处理（docs/01 §8）；但要留一行日志，
+// 否则消息被平台吞掉时业务侧只会看到"已回复"。
+func (a *Adapter) convertResult(res *api.Result, err error) (port.Result, error) {
 	if err != nil {
-		var apiErr *apierr.APIError
-		if errors.As(err, &apiErr) && apiErr.IsDuplicate() {
-			// 平台按 msg_id+msg_seq 判定重复 = 已经发出过，业务按成功处理（docs/01 §8）。
+		if isDuplicate(err) {
+			// 平台按 msg_id + msg_seq 判定重复 = 已经发出过，业务按成功处理（docs/01 §8）。
+			var apiErr *apierr.APIError
+			_ = errors.As(err, &apiErr)
+			a.log.Warn("平台判定文本重复，按已发送处理",
+				"code", apiErr.Code, "api_msg", apiErr.Message, "trace", apiErr.TraceID)
 			return port.Result{Deduped: true}, nil
 		}
 		return port.Result{}, err
