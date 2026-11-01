@@ -42,11 +42,10 @@ type Toolbox interface {
 // 语音已经把话说完了，再打一行字只会像"动作预告"。
 func (o *Orchestrator) chatWithTools(ctx context.Context, model port.ChatModel, req port.ChatRequest, scene port.Scene, allowTools bool, audioSent *atomic.Bool) (*port.ChatResponse, []port.Block, error) {
 	// 没有工具可声明时，禁与不禁是同一回事，直接单次问答。
-	if o.cfg.Toolbox == nil {
-		resp, err := model.Chat(ctx, req)
-		return resp, nil, err
+	var specs []port.ToolSpec
+	if o.cfg.Toolbox != nil {
+		specs = o.cfg.Toolbox.Specs(scene)
 	}
-	specs := o.cfg.Toolbox.Specs(scene)
 	if len(specs) == 0 {
 		resp, err := model.Chat(ctx, req)
 		return resp, nil, err

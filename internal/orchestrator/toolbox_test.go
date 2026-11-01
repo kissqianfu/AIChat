@@ -15,6 +15,16 @@ func noToolsPolicy(context.Context, port.Event) (schedule.Policy, error) {
 	return schedule.Policy{Caps: schedule.Caps{Tools: false, Memory: true, MaxReplyRunes: 300}}, nil
 }
 
+// newNoToolsOrch 造一个禁用档编排器，供"工具被拦"相关用例复用。
+func newNoToolsOrch(t *testing.T, tb Toolbox, model port.ChatModel) *Orchestrator {
+	t.Helper()
+	o, err := New(Config{Model: model, Persona: "p", Toolbox: tb, Policy: noToolsPolicy})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	return o
+}
+
 // fakeToolbox 记录工具调用。
 type fakeToolbox struct {
 	specs  []port.ToolSpec
@@ -242,10 +252,7 @@ func TestBlockedToolStillDeclaresSchema(t *testing.T) {
 		{ToolCalls: []port.ToolCall{{ID: "call-1", Name: "send_voice", Arguments: json.RawMessage(`{"text":"晚安"}`)}}},
 		{Content: "晚安，早点睡"},
 	}}
-	o, err := New(Config{Model: model, Persona: "p", Toolbox: toolbox, Policy: noToolsPolicy})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	o := newNoToolsOrch(t, toolbox, model)
 	outs, err := o.Replies(context.Background(), messageEvent())
 	if err != nil {
 		t.Fatalf("Replies() error = %v", err)
@@ -276,10 +283,7 @@ func TestBlockedToolFallbackWithoutSchema(t *testing.T) {
 	toolbox := &fakeToolbox{specs: []port.ToolSpec{{Name: "send_voice"}}}
 	call := &port.ChatResponse{ToolCalls: []port.ToolCall{{ID: "c", Name: "send_voice"}}}
 	model := &seqModel{responses: []*port.ChatResponse{call, call, call}}
-	o, err := New(Config{Model: model, Persona: "p", Toolbox: toolbox, Policy: noToolsPolicy})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	o := newNoToolsOrch(t, toolbox, model)
 	outs, err := o.Replies(context.Background(), messageEvent())
 	if err != nil {
 		t.Fatalf("Replies() error = %v", err)
@@ -298,6 +302,24 @@ func TestBlockedToolFallbackWithoutSchema(t *testing.T) {
 		t.Fatalf("兜底请求缺少强制说明：%q", fallback.Messages[0].Content)
 	}
 	if len(outs) != 1 || !strings.Contains(outs[0].Content.Plain, "fallback") {
+		t.Fatalf("outs = %+v", outs)
+	}
+}
+
+// TestBlockedToolsSkipExtraRoundWhenUnwanted 验证禁用档不额外花钱：
+// 模型没想用工具时仍然只调一次，schema 声明不影响正常对话的往返次数。
+func TestBlockedToolsSkipExtraRoundWhenUnwanted(t *testing.T) {
+	toolbox := &fakeToolbox{specs: []port.ToolSpec{{Name: "send_voice"}}}
+	model := &seqModel{responses: []*port.ChatResponse{{Content: "晚安，早点睡"}}}
+	o := newNoToolsOrch(t, toolbox, model)
+	outs, err := o.Replies(context.Background(), messageEvent())
+	if err != nil {
+		t.Fatalf("Replies() error = %v", err)
+	}
+	if len(model.requests) != 1 {
+		t.Fatalf("model calls = %d, want 1（没想用工具就不该多跑）", len(model.requests))
+	}
+	if len(outs) != 1 || !strings.Contains(outs[0].Content.Plain, "早点睡") {
 		t.Fatalf("outs = %+v", outs)
 	}
 }
