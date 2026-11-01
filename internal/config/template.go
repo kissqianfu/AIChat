@@ -102,11 +102,14 @@ balance:
     #   api_key_name: breezeblue
 
 
-# 模型槽位：每个引用自带 base_url 与 api_key_name（→ api_key 表）。
-# 能力槽位（vision/asr/tts/imagegen）的 base_url 留空 = 该能力关闭。
+# 模型槽位：每个引用自带 protocol / base_url / api_key_name（→ api_key 表）。
+#   protocol 决定「用谁家的模型」：对话与视觉 = deepseek（默认）| openai | qianwen；
+#     base_url 可省略（按 protocol 取官方默认端点；千问会自动补 /compatible-mode/v1）。
+#     换千问：protocol: qianwen + api_key_name 指向百炼 key，model 写 qwen-plus 之类。
+#   能力槽位的 base_url 留空 = 该能力关闭。
 models:
   chat:
-    # 日常闲聊，默认槽位（必填）
+    # 日常闲聊，默认槽位（必填）。protocol 省略 = deepseek。
     fast:
       primary: { base_url: https://api.deepseek.com, model: deepseek-flash, api_key_name: deepseek }
     # 复杂推理/长文；缺失时回落 fast

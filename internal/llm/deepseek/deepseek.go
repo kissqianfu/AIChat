@@ -1,32 +1,28 @@
-// Package deepseek 是 DeepSeek Chat Completions 的协议适配器（net/http 手写，零 SDK 依赖）。
+// Package deepseek 是 DeepSeek 官方 Chat Completions 的子模块。
 //
-// M1-1 只实现非流式 Chat；流式/工具调用在 M1 后续补齐（docs/08 §2/§3）。
+// 公共的 OpenAI 兼容实现（请求体、SSE、工具调用累积、思考段丢弃）在
+// internal/llm/compat；本包只声明 DeepSeek 与标准 OpenAI 的三处差异：
+//
+//  1. 默认端点 api.deepseek.com（不带 /v1）；
+//  2. 思考开关是 thinking:{type:"enabled"}，且默认**不**思考——所以关闭时
+//     不需要发任何参数；
+//  3. 缓存命中的输入 token 在 prompt_cache_hit_tokens（不是标准的
+//     prompt_tokens_details.cached_tokens）。
 package deepseek
 
 import (
-	"bufio"
-	"bytes"
-	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"strings"
-	"time"
 
-	"github.com/kissqianfu/aichat/internal/platform/httpclient"
-	"github.com/kissqianfu/aichat/internal/port"
+	"github.com/kissqianfu/aichat/internal/llm/compat"
 )
 
 const (
 	// DefaultBaseURL 是 DeepSeek API 地址。
 	DefaultBaseURL = "https://api.deepseek.com"
-	// DefaultModel 是 M1-1 的单槽模型（M1-3 换成槽位注册表）。
+	// DefaultModel 是缺省模型（配置里没写 model 时用）。
 	DefaultModel = "deepseek-flash"
-	// maxBody 限制响应体读取。
-	maxBody = 4 << 20
 )
 
 // Config 是适配器参数（key 由上层从 api_key 表读出注入）。
@@ -38,16 +34,10 @@ type Config struct {
 	Logger  *slog.Logger
 }
 
-// Model 实现 port.ChatModel 的非流式部分。
-type Model struct {
-	apiKey  string
-	baseURL string
-	model   string
-	http    *http.Client
-	log     *slog.Logger
-}
-
-var _ port.ChatModel = (*Model)(nil)
+// Model 是 compat.Model 的别名：本包不覆盖任何公共逻辑，只是把它配置成
+// DeepSeek 的形状。别名而不是新类型，是为了让调用方（registry）拿到的仍然是
+// port.ChatModel，也让老测试里的 *Model 继续成立。
+type Model = compat.Model
 
 // New 构造适配器。
 func New(cfg Config) (*Model, error) {
@@ -60,429 +50,36 @@ func New(cfg Config) (*Model, error) {
 	if cfg.Model == "" {
 		cfg.Model = DefaultModel
 	}
-	if cfg.HTTP == nil {
-		cfg.HTTP = httpclient.New(60 * time.Second)
-	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-	return &Model{apiKey: cfg.APIKey, baseURL: cfg.BaseURL, model: cfg.Model, http: cfg.HTTP, log: cfg.Logger}, nil
+	return compat.New(compat.Config{
+		APIKey:  cfg.APIKey,
+		BaseURL: cfg.BaseURL,
+		Model:   cfg.Model,
+		HTTP:    cfg.HTTP,
+		Logger:  cfg.Logger,
+		Dialect: Dialect{},
+	})
 }
 
-// chatRequest 是 DeepSeek 请求体。
-type chatRequest struct {
-	Model          string          `json:"model"`
-	Messages       []wireMessage   `json:"messages"`
-	Temperature    *float64        `json:"temperature,omitempty"`
-	MaxTokens      int             `json:"max_tokens,omitempty"`
-	Stop           []string        `json:"stop,omitempty"`
-	Thinking       *thinkingParam  `json:"thinking,omitempty"`
-	Tools          []wireTool      `json:"tools,omitempty"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
-	Stream         bool            `json:"stream"`
-	StreamOptions  *streamOptions  `json:"stream_options,omitempty"`
+// Dialect 是 DeepSeek 的 wire 差异。
+type Dialect struct{}
+
+// Name 是错误与日志前缀。
+func (Dialect) Name() string { return "deepseek" }
+
+// EncodeThinking 只在「要思考」时写 thinking:{type:"enabled"}。
+//
+// 关闭时什么都不发：DeepSeek 默认不思考，多写一个 thinking:{type:"disabled"}
+// 反而要求官方认得这个取值，属于给自己上额外的兼容负担。
+//
+// 思考模式下温度必须丢弃——官方对思考请求的温度是静默失效的（不报错、也不生效），
+// 留着只会让人以为设置生效了（docs/08 的"温度映射陷阱"）。
+func (Dialect) EncodeThinking(p *compat.Payload, on bool) {
+	if !on {
+		return
+	}
+	p.Thinking = &compat.ThinkingParam{Type: "enabled"}
+	p.Temperature = nil
 }
 
-// thinkingParam 是思考模式开关（docs/08 §2.7：参数名 thinking，适配器负责映射）。
-type thinkingParam struct {
-	Type string `json:"type"`
-}
-
-// wireMessage 是线上消息格式（tool 调用往返需要 tool_calls / tool_call_id）。
-type wireMessage struct {
-	Role       string         `json:"role"`
-	Content    any            `json:"content"`
-	Name       string         `json:"name,omitempty"`
-	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-}
-
-// wireContent 是多模态消息的一段（text 或 image_url）。
-type wireContent struct {
-	Type     string        `json:"type"`
-	Text     string        `json:"text,omitempty"`
-	ImageURL *wireImageURL `json:"image_url,omitempty"`
-}
-
-// wireImageURL 是图片引用（data URL 或公网 https）。
-type wireImageURL struct {
-	URL string `json:"url"`
-}
-
-// wireTool 是请求里的工具声明。
-type wireTool struct {
-	Type     string `json:"type"`
-	Function struct {
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		Parameters  json.RawMessage `json:"parameters"`
-	} `json:"function"`
-}
-
-// wireToolCall 是模型返回/回传的工具调用。
-type wireToolCall struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
-
-// responseFormat 是 JSON 模式。
-type responseFormat struct {
-	Type string `json:"type"`
-}
-
-// chatResponse 是 DeepSeek 响应体（只取 M1-1 需要的字段）。
-type chatResponse struct {
-	Choices []struct {
-		Message struct {
-			Content          string         `json:"content"`
-			ReasoningContent string         `json:"reasoning_content"`
-			ToolCalls        []wireToolCall `json:"tool_calls"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage struct {
-		PromptTokens         int `json:"prompt_tokens"`
-		CompletionTokens     int `json:"completion_tokens"`
-		TotalTokens          int `json:"total_tokens"`
-		PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
-	} `json:"usage"`
-}
-
-// Chat 实现非流式对话。
-func (m *Model) Chat(ctx context.Context, req port.ChatRequest) (*port.ChatResponse, error) {
-	payload := chatRequest{
-		Model:     m.model,
-		Messages:  toWire(req.Messages),
-		Tools:     toWireTools(req.Tools),
-		MaxTokens: req.MaxTokens,
-		Stop:      req.Stop,
-		Stream:    false,
-	}
-	if req.Temperature != nil {
-		payload.Temperature = req.Temperature
-	}
-	if req.Thinking {
-		// 思考模式是参数不是模型（DEV_PROMPT §6.1）；温度映射此时无效，直接丢弃。
-		payload.Thinking = &thinkingParam{Type: "enabled"}
-		payload.Temperature = nil
-	}
-	if req.JSONMode {
-		payload.ResponseFormat = &responseFormat{Type: "json_object"}
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("deepseek: encode request: %w", err)
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("deepseek: build request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+m.apiKey)
-
-	resp, err := m.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("deepseek: request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
-	if err != nil {
-		return nil, fmt.Errorf("deepseek: read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("deepseek: HTTP %d: %s", resp.StatusCode, truncateForLog(body))
-	}
-
-	var parsed chatResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("deepseek: decode response: %w", err)
-	}
-	if len(parsed.Choices) == 0 {
-		return nil, errors.New("deepseek: 响应没有 choices")
-	}
-	choice := parsed.Choices[0]
-	return &port.ChatResponse{
-		Content:      choice.Message.Content,
-		Reasoning:    choice.Message.ReasoningContent,
-		ToolCalls:    fromWireToolCalls(choice.Message.ToolCalls),
-		FinishReason: choice.FinishReason,
-		Usage: port.TokenUsage{
-			PromptTokens:     parsed.Usage.PromptTokens,
-			CompletionTokens: parsed.Usage.CompletionTokens,
-			TotalTokens:      parsed.Usage.TotalTokens,
-			CachedTokens:     parsed.Usage.PromptCacheHitTokens,
-		},
-	}, nil
-}
-
-// Stream 实现流式对话（SSE，docs/08 §2.4）：content/reasoning 逐段产出，
-// 工具调用增量按 index 累积到 finish_reason=tool_calls 时一次性产出。
-func (m *Model) Stream(ctx context.Context, req port.ChatRequest) (port.ChatStream, error) {
-	payload := chatRequest{
-		Model:     m.model,
-		Messages:  toWire(req.Messages),
-		Tools:     toWireTools(req.Tools),
-		MaxTokens: req.MaxTokens,
-		Stop:      req.Stop,
-		Stream:    true,
-	}
-	if req.Temperature != nil {
-		payload.Temperature = req.Temperature
-	}
-	if req.Thinking {
-		payload.Thinking = &thinkingParam{Type: "enabled"}
-		payload.Temperature = nil
-	}
-	if req.JSONMode {
-		payload.ResponseFormat = &responseFormat{Type: "json_object"}
-	}
-	payload.StreamOptions = &streamOptions{IncludeUsage: true}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("deepseek: encode stream request: %w", err)
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("deepseek: build stream request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+m.apiKey)
-	httpReq.Header.Set("Accept", "text/event-stream")
-
-	resp, err := m.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("deepseek: stream request: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
-		_ = resp.Body.Close()
-		return nil, fmt.Errorf("deepseek: stream HTTP %d: %s", resp.StatusCode, truncateForLog(body))
-	}
-	s := &sseStream{body: resp.Body}
-	s.scanner = bufio.NewScanner(resp.Body)
-	s.scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	return s, nil
-}
-
-// streamOptions 请求最终 chunk 带用量（官方 stream_options.include_usage）。
-type streamOptions struct {
-	IncludeUsage bool `json:"include_usage"`
-}
-
-// streamChunk 是 SSE data: 行的增量结构（只取需要的字段）。
-type streamChunk struct {
-	Choices []struct {
-		Delta struct {
-			Content          string           `json:"content"`
-			ReasoningContent string           `json:"reasoning_content"`
-			ToolCalls        []streamToolCall `json:"tool_calls"`
-		} `json:"delta"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage *struct {
-		PromptTokens         int `json:"prompt_tokens"`
-		CompletionTokens     int `json:"completion_tokens"`
-		TotalTokens          int `json:"total_tokens"`
-		PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
-	} `json:"usage"`
-}
-
-// streamToolCall 是工具调用的增量片段（按 index 累积）。
-type streamToolCall struct {
-	Index    int    `json:"index"`
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
-
-// sseStream 实现 port.ChatStream（DeepSeek SSE）。
-type sseStream struct {
-	scanner *bufio.Scanner
-	body    io.ReadCloser
-
-	toolAcc []wireToolCall // 工具调用增量累积（index 序）
-	usage   *port.TokenUsage
-	done    bool
-}
-
-var _ port.ChatStream = (*sseStream)(nil)
-
-// Recv 产出下一段增量；流结束返回 io.EOF。
-func (s *sseStream) Recv() (port.Delta, error) {
-	if s.done {
-		return port.Delta{}, io.EOF
-	}
-	for s.scanner.Scan() {
-		line := strings.TrimSpace(s.scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") || strings.HasPrefix(line, "event:") {
-			continue
-		}
-		data, ok := strings.CutPrefix(line, "data:")
-		if !ok {
-			continue
-		}
-		data = strings.TrimSpace(data)
-		if data == "[DONE]" {
-			s.done = true
-			delta := port.Delta{FinishReason: "stop", Usage: s.usage}
-			return delta, nil
-		}
-		var chunk streamChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return port.Delta{}, fmt.Errorf("deepseek: decode stream chunk: %w", err)
-		}
-		if chunk.Usage != nil {
-			s.usage = &port.TokenUsage{
-				PromptTokens:     chunk.Usage.PromptTokens,
-				CompletionTokens: chunk.Usage.CompletionTokens,
-				TotalTokens:      chunk.Usage.TotalTokens,
-				CachedTokens:     chunk.Usage.PromptCacheHitTokens,
-			}
-		}
-		if len(chunk.Choices) == 0 {
-			continue // include_usage 的最终 chunk 只有 usage
-		}
-		choice := chunk.Choices[0]
-		// 工具调用增量：按 index 累积，finish 时一次性产出。
-		for _, tc := range choice.Delta.ToolCalls {
-			for len(s.toolAcc) <= tc.Index {
-				s.toolAcc = append(s.toolAcc, wireToolCall{})
-			}
-			acc := &s.toolAcc[tc.Index]
-			if tc.ID != "" {
-				acc.ID = tc.ID
-			}
-			if tc.Type != "" {
-				acc.Type = tc.Type
-			}
-			acc.Function.Name += tc.Function.Name
-			acc.Function.Arguments += tc.Function.Arguments
-		}
-		switch choice.FinishReason {
-		case "tool_calls":
-			s.done = true
-			return port.Delta{
-				ToolCalls:    fromWireToolCalls(s.toolAcc),
-				FinishReason: "tool_calls",
-				Usage:        s.usage,
-			}, nil
-		case "stop", "length":
-			delta := port.Delta{FinishReason: choice.FinishReason, Usage: s.usage}
-			if choice.Delta.Content != "" {
-				delta.Content = choice.Delta.Content
-			}
-			return delta, nil
-		}
-		// 常规增量：只产出正文，思考段一律丢弃。
-		//
-		// 曾经把 reasoning_content 当 Content 返回（"无内容时回思考段"），后果是
-		// 推理模型的内心独白会被当成回复流出去：模型先"想"一段（"用户要再来一句
-		// 语音……这次遵守"），流式已经开始往外贴字；等 tool_calls 到达，编排层判定
-		// "内容与工具调用混合"放弃流式——但字已经贴在用户屏幕上了，Abort 收不回
-		// 私聊里那条消息。用户看到的就是"机器人在念操作步骤"。
-		if choice.Delta.Content != "" {
-			return port.Delta{Content: choice.Delta.Content}, nil
-		}
-		if choice.Delta.ReasoningContent != "" {
-			continue
-		}
-	}
-	// scanner 耗尽：正常 EOF 或读错误。
-	s.done = true
-	if err := s.scanner.Err(); err != nil {
-		return port.Delta{}, fmt.Errorf("deepseek: stream read: %w", err)
-	}
-	return port.Delta{}, io.EOF
-}
-
-// Close 关闭底层 HTTP 流。
-func (s *sseStream) Close() error {
-	return s.body.Close()
-}
-
-// toWire 转换消息。
-func toWire(messages []port.ChatMessage) []wireMessage {
-	out := make([]wireMessage, 0, len(messages))
-	for _, msg := range messages {
-		out = append(out, wireMessage{
-			Role:       string(msg.Role),
-			Content:    buildWireContent(msg),
-			Name:       msg.Name,
-			ToolCalls:  toWireToolCalls(msg.ToolCalls),
-			ToolCallID: msg.ToolCallID,
-		})
-	}
-	return out
-}
-
-// toWireTools 转换工具声明。
-func toWireTools(tools []port.ToolSpec) []wireTool {
-	out := make([]wireTool, 0, len(tools))
-	for _, spec := range tools {
-		var wire wireTool
-		wire.Type = "function"
-		wire.Function.Name = spec.Name
-		wire.Function.Description = spec.Description
-		wire.Function.Parameters = spec.Schema
-		out = append(out, wire)
-	}
-	return out
-}
-
-// toWireToolCalls 转换模型要回传的工具调用。
-func toWireToolCalls(calls []port.ToolCall) []wireToolCall {
-	out := make([]wireToolCall, 0, len(calls))
-	for _, call := range calls {
-		var wire wireToolCall
-		wire.ID = call.ID
-		wire.Type = "function"
-		wire.Function.Name = call.Name
-		wire.Function.Arguments = string(call.Arguments)
-		out = append(out, wire)
-	}
-	return out
-}
-
-// fromWireToolCalls 转换模型返回的工具调用。
-func fromWireToolCalls(calls []wireToolCall) []port.ToolCall {
-	out := make([]port.ToolCall, 0, len(calls))
-	for _, call := range calls {
-		out = append(out, port.ToolCall{
-			ID:        call.ID,
-			Name:      call.Function.Name,
-			Arguments: json.RawMessage(call.Function.Arguments),
-		})
-	}
-	return out
-}
-
-// truncateForLog 截断错误体，避免把超长内容打进日志。
-func truncateForLog(body []byte) string {
-	const limit = 512
-	if len(body) <= limit {
-		return string(body)
-	}
-	return string(body[:limit]) + "..."
-}
-
-// buildWireContent 构造消息内容：纯文本直接用 string；有图片时切成多模态数组。
-func buildWireContent(msg port.ChatMessage) any {
-	if len(msg.Images) == 0 {
-		return msg.Content
-	}
-	parts := []wireContent{{Type: "text", Text: msg.Content}}
-	for _, img := range msg.Images {
-		if img.URL == "" {
-			continue
-		}
-		parts = append(parts, wireContent{Type: "image_url", ImageURL: &wireImageURL{URL: img.URL}})
-	}
-	return parts
-}
+// CachedTokens 取 prompt_cache_hit_tokens。
+func (Dialect) CachedTokens(u compat.Usage) int { return u.PromptCacheHitTokens }

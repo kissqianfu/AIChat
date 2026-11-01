@@ -1,9 +1,12 @@
 package adapter
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/kissqianfu/aichat/internal/llm/protocol"
+	"github.com/kissqianfu/aichat/internal/port"
 )
 
 // 默认端点按协议不同——这正是「protocol 决定调用谁家」的落点：
@@ -55,4 +58,55 @@ func TestProtocolOf(t *testing.T) {
 	if got := ProtocolOf(protocol.Qianwen); got != protocol.Qianwen {
 		t.Fatalf("qianwen 应原样返回，实得 %q", got)
 	}
+}
+
+// 注册表是扩展点：接一家新厂商只需要一个 Provider（默认端点 + 构造函数），
+// NewChat 的分派逻辑一行都不用改。这条测试用假厂商把这个约定钉住——
+// 哪天有人把分派改回 switch，这里会红。
+func TestRegisterExtendsProviders(t *testing.T) {
+	const proto = "test-vendor-adapter"
+	Register(proto, Provider{
+		DefaultBaseURL: "https://api.test-vendor.example/v1",
+		Build: func(p ChatParams) (port.ChatModel, error) {
+			if p.BaseURL == "" {
+				t.Fatal("注册表应在构造前补好默认端点")
+			}
+			return stubModel{}, nil
+		},
+	})
+	if got := DefaultBaseURL(strings.ToUpper(proto)); got != "https://api.test-vendor.example/v1" {
+		t.Fatalf("DefaultBaseURL = %q（协议名应大小写不敏感）", got)
+	}
+	if _, err := NewChat(ChatParams{Protocol: proto, APIKey: "k", Model: "m"}); err != nil {
+		t.Fatalf("NewChat() error = %v", err)
+	}
+}
+
+// 内置三家必须全部注册好——少一家不会编译失败，只会在运行时才报
+// "协议没有对话实现"，那种错要等到线上切配置才暴露。
+func TestBuiltinProvidersRegistered(t *testing.T) {
+	got := Registered()
+	for _, want := range []string{protocol.DeepSeek, protocol.OpenAI, protocol.Qianwen} {
+		found := false
+		for _, name := range got {
+			if name == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("内置协议 %q 未注册，已注册：%v", want, got)
+		}
+	}
+}
+
+// stubModel 只用来证明注册表能返回模型，行为无关紧要。
+type stubModel struct{}
+
+func (stubModel) Chat(context.Context, port.ChatRequest) (*port.ChatResponse, error) {
+	return nil, nil
+}
+
+func (stubModel) Stream(context.Context, port.ChatRequest) (port.ChatStream, error) {
+	return nil, nil
 }
