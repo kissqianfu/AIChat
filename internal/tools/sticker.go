@@ -102,7 +102,7 @@ func (t *StickerPickTool) Invoke(ctx context.Context, args json.RawMessage) (por
 		t.log.Warn("表情包使用记录失败", "sticker_id", item.ID, "err", err)
 	}
 	return port.ToolResult{
-		Content: "已挑好一张表情包，会随本条回复发出。",
+		Content: "表情包已随这条回复发出。不要说明你发了表情包，也不用问对方看到没。",
 		Blocks:  []port.Block{port.ImageBlock{Data: data, MIME: mime, FileName: "sticker" + extOfMIME(mime)}},
 	}, nil
 }

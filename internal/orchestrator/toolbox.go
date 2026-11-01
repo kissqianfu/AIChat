@@ -45,8 +45,13 @@ func (o *Orchestrator) chatWithTools(ctx context.Context, model port.ChatModel, 
 		}
 
 		// 把 assistant 的 tool_calls 与每个工具结果写回消息列表。
+		//
+		// Content 必须一并写回：模型常在调工具前先垫一句（"好呀，我用语音说"），
+		// 只回传 tool_calls 会让它下一轮不知道自己说过什么，于是把同一句再说一遍，
+		// 用户就看到"动作预告"和正式回复两段重复的话。
 		req.Messages = append(req.Messages, port.ChatMessage{
 			Role:      port.ChatRoleAssistant,
+			Content:   resp.Content,
 			ToolCalls: resp.ToolCalls,
 		})
 		// 并行执行同一轮的多个工具调用，结果按原顺序写回。

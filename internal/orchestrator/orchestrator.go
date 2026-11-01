@@ -319,7 +319,9 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 		o.cfg.CallLog(ctx, ev, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.FinishReason)
 	}
 	content := strings.TrimSpace(resp.Content)
-	if content == "" {
+	// 纯媒体回复是合法的：模型只调了 send_voice / sticker_pick / image_gen 而没说话。
+	// 文本与媒体都空才是真异常（否则"别预告动作"的引导会让整条语音一起被丢）。
+	if content == "" && len(mediaBlocks) == 0 {
 		return nil, errors.New("orchestrator: 模型返回空内容")
 	}
 	// [SKIP] 自决协议（2026-11-01）：群普通消息直接进主模型，模型自己决定要不要插话；
@@ -334,7 +336,11 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	if safe, reason := safety.Check(content); !safe {
 		content = reason
 	}
-	o.storeCache(ctx, ev, userText, content)
+	// 空正文（纯媒体回复）不进缓存：缓存的是"这句话的答法"，
+	// 存一条空串会让下次同样的问题命中后发不出任何东西。
+	if content != "" {
+		o.storeCache(ctx, ev, userText, content)
+	}
 	o.cfg.Logger.Info("模型已生成回复",
 		"event_id", ev.ID,
 		"prompt_tokens", resp.Usage.PromptTokens,
@@ -357,9 +363,13 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 		return outs, nil
 	}
 
-	outs, err := o.renderReply(ctx, content)
-	if err != nil {
-		return nil, err
+	var outs []port.Outbound
+	if content != "" {
+		rendered, rerr := o.renderReply(ctx, content)
+		if rerr != nil {
+			return nil, rerr
+		}
+		outs = rendered
 	}
 	// 工具附带的媒体（如表情包）作为一条额外消息发出；额度不足时按 budget 规则降级。
 	if len(mediaBlocks) > 0 {
@@ -374,11 +384,31 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 			o.cfg.Logger.Warn("更新记忆访问失败", "err", err)
 		}
 	}
-	o.record(ctx, ev, userText, content)
+	// 纯媒体回复也要在历史里留个记号，否则模型下一轮看不到自己刚发过语音，
+	// 很可能再发一遍。占位文本只进库，不发送。
+	o.record(ctx, ev, userText, recordedReply(content, mediaBlocks))
 	o.extractAsync(ev, userText)
 	o.maybeSummarize(ev)
 	o.maybeSummarizeRelationship(ev)
 	return outs, nil
+}
+
+// recordedReply 是落库用的回复文本：纯媒体回复（只发了语音/图，没打字）用占位串顶上。
+// 历史里留一句"（发了语音）"比留空有用——模型的上下文里至少知道自己刚做过什么，
+// 不会下一轮又发一遍同样的东西。占位串只进库，不会发出去。
+func recordedReply(content string, blocks []port.Block) string {
+	if content != "" {
+		return content
+	}
+	for _, b := range blocks {
+		switch b.(type) {
+		case port.AudioBlock:
+			return "（发了语音）"
+		case port.ImageBlock:
+			return "（发了图片）"
+		}
+	}
+	return "（发了媒体）"
 }
 
 // selectModel 按 ModelFor 路由选模型；无路由用固定 Model，两者皆缺时报错。

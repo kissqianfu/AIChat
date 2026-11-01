@@ -52,9 +52,9 @@ db:
 # 分时段档位
 hours:
   windows:
-    - { days: "1-5", range: "09:00-12:00", tier: work }    # 工作日上班
+    - { days: "1-5", range: "09:00-12:00", tier: work }   # 工作日上班
     - { days: "1-5", range: "14:00-18:00", tier: work }
-    - { days: "*",   range: "23:00-07:00", tier: night }   # 每天深夜
+    - { days: "*",  range: "23:00-07:00", tier: night }   # 每天深夜
 
 
 # 人设（唯一真源在 persona/ 目录，不进库）
@@ -121,9 +121,8 @@ features:
   memory_extract: true             # 被动记忆抽取
   tools: true                      # 工具调用
   followup: true                   # 追问引导
-  interject: true                  # 自决插话：群消息进主模型，模型输出 [SKIP] 即沉默
-                                   # 还要过档位：work/night 的 Proactive=false 时不插话
-                                   # （@、点名、私聊、回复后 3 分钟内的追问不受影响）
+  interject: true                  # 自决插话
+                                   
 `
 
 // WriteTemplate 把模板配置写到 path（父目录自动创建）。已存在时不覆盖，返回 false。

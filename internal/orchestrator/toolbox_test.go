@@ -90,6 +90,73 @@ func TestChatWithToolsMaxRounds(t *testing.T) {
 	}
 }
 
+// TestChatWithToolsKeepsAssistantContent 验证调工具那一轮的过渡语会写回上下文。
+//
+// 丢了它模型就不知道自己说过什么，下一轮容易把同一句再说一遍——用户于是
+// 收到"我要发语音了" + 正式回复两条重复的话。
+func TestChatWithToolsKeepsAssistantContent(t *testing.T) {
+	toolbox := &fakeToolbox{specs: []port.ToolSpec{{Name: "send_voice"}}}
+	model := &seqModel{responses: []*port.ChatResponse{
+		{
+			Content:   "好呀，我用语音说～",
+			ToolCalls: []port.ToolCall{{ID: "call-1", Name: "send_voice", Arguments: json.RawMessage(`{"text":"晚安"}`)}},
+		},
+		{Content: ""},
+	}}
+	o, err := New(Config{Model: model, Persona: "p", Toolbox: toolbox})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	_, _ = o.Replies(context.Background(), messageEvent())
+	if len(model.requests) < 2 {
+		t.Fatalf("model calls = %d", len(model.requests))
+	}
+	var found bool
+	for _, m := range model.requests[1].Messages {
+		if m.Role == port.ChatRoleAssistant && len(m.ToolCalls) > 0 {
+			found = true
+			if m.Content != "好呀，我用语音说～" {
+				t.Fatalf("assistant content = %q, want 保留过渡语", m.Content)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("第二轮请求里没有 assistant tool_calls 消息")
+	}
+}
+
+// TestPureMediaReply 验证"只发语音/图、不打字"是合法回复：
+// 媒体照发，不因空正文报错，历史里留占位记号。
+func TestPureMediaReply(t *testing.T) {
+	audio := port.AudioBlock{Data: []byte("mp3"), MIME: "audio/mpeg", FileName: "voice.mp3"}
+	toolbox := &fakeToolbox{specs: []port.ToolSpec{{Name: "send_voice"}}, blocks: []port.Block{audio}}
+	model := &seqModel{responses: []*port.ChatResponse{
+		{ToolCalls: []port.ToolCall{{ID: "call-1", Name: "send_voice", Arguments: json.RawMessage(`{"text":"晚安"}`)}}},
+		{Content: ""},
+	}}
+	recorder := &fakeRecorder{}
+	o, err := New(Config{Model: model, Persona: "p", Toolbox: toolbox, Recorder: recorder})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	outs, err := o.Replies(context.Background(), messageEvent())
+	if err != nil {
+		t.Fatalf("Replies() error = %v", err)
+	}
+	if len(outs) != 1 || outs[0].Intent != port.IntentMedia {
+		t.Fatalf("outs = %+v, want 只有一条媒体", outs)
+	}
+	var out string
+	for _, r := range recorder.recs {
+		if r.Direction == "out" {
+			out = r.Content
+		}
+	}
+	if out != "（发了语音）" {
+		t.Fatalf("落库出站 = %q, want 占位记号", out)
+	}
+}
+
 // TestToolMediaAppendedAsOutbound 验证工具结果里的媒体块会作为一条额外 IntentMedia 发出。
 func TestToolMediaAppendedAsOutbound(t *testing.T) {
 	img := port.ImageBlock{Data: []byte("png"), MIME: "image/png", FileName: "sticker.png"}

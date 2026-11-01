@@ -77,7 +77,10 @@ func (t *VoiceTool) Invoke(ctx context.Context, args json.RawMessage) (port.Tool
 		mime = "audio/silk"
 	}
 	return port.ToolResult{
-		Content: "已发送语音。",
+		// 媒体结果由编排层单独发出，模型这一轮只需要"知道发出了"。
+		// 文案里明说不必复述，否则模型经常补一句"语音发给你啦"，
+		// 用户就收到"文字 + 语音"两条，像在念操作步骤。
+		Content: "语音已直接发到对话里。不要复述、不要说明你发了语音，也不用问听没听到；有别的要说的就正常接着说。",
 		Blocks:  []port.Block{port.AudioBlock{Data: silk, MIME: mime, FileName: voiceFileName(mime)}},
 	}, nil
 }
