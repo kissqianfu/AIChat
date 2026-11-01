@@ -249,17 +249,14 @@ func (w *wiring) openRepos() {
 
 	w.budget = budget.NewBudgetWithStore(w.clk, repo.NewBudgetRepo(w.store, w.clk))
 	w.schedStore = repo.NewScheduleStore(w.store, w.clk)
-	w.scheduler = schedule.New(w.clk, w.schedStore).WithExceptions(w.schedStore).WithWindows(w.scheduleWindows())
+	w.scheduler = schedule.New(w.clk, w.schedStore).WithExceptions(w.schedStore).
+		WithWindows(parseWindows(w.cfg.Hours.Windows, w.logger))
 	w.proactive = newProactiveAdapter(w.store, w.clk)
 }
 
-// scheduleWindows 把 config 的 hours 规则解析成 []schedule.Window（启动时调用）。
-func (w *wiring) scheduleWindows() []schedule.Window {
-	return parseWindows(w.cfg.Hours.Windows, w.logger)
-}
-
-// parseWindows 把 config 的 hours.windows 列表解析成 []schedule.Window；格式已由 config 校验，
-// 这里解析失败（理论上不可达）跳过该条并告警。windows 为空时用内置默认。
+// parseWindows 把 config 的 hours.windows 列表解析成 []schedule.Window（启动装配与
+// reloadHours 热重载共用）；格式已由 config 校验，这里解析失败（理论上不可达）
+// 跳过该条并告警。windows 为空时用内置默认。
 func parseWindows(wcs []config.WindowConfig, logger *slog.Logger) []schedule.Window {
 	var wins []schedule.Window
 	for _, wc := range wcs {

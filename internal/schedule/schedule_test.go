@@ -52,11 +52,7 @@ func at(month time.Month, day, hour, minute int) time.Time {
 
 func resolveAt(t *testing.T, store OverrideStore, tm time.Time, groupID string) Policy {
 	t.Helper()
-	p, err := New(clock.NewFrozen(tm), store).Resolve(context.Background(), groupID)
-	if err != nil {
-		t.Fatalf("Resolve(%v, %q) error: %v", tm, groupID, err)
-	}
-	return p
+	return mustResolve(t, New(clock.NewFrozen(tm), store), groupID)
 }
 
 func TestResolveWorkBoundaries(t *testing.T) {
