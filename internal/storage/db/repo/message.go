@@ -115,6 +115,7 @@ func (r *MessageRepo) recent(ctx context.Context, targetID, senderID string, lim
 			created = time.UnixMilli(createdMS)
 		}
 		messages = append(messages, port.HistoryMessage{
+			MsgID:      msgID.String,
 			SenderID:   sender.String,
 			SenderName: senderName.String,
 			Direction:  direction,

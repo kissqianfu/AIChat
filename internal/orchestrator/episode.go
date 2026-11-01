@@ -6,11 +6,15 @@ import (
 	"time"
 
 	"github.com/kissqianfu/aichat/internal/port"
+	"github.com/kissqianfu/aichat/internal/prompt"
 )
 
 const (
 	// episodeRecentLimit 是生成情景时取的历史消息条数。
 	episodeRecentLimit = 12
+	// episodeMinMessages 是归档一段话题所需的最少消息数（太少没信息量；与
+	// memory 包的 episodeMinMessages 同口径）。
+	episodeMinMessages = 2
 	// turnsPruneAt 是轮次计数器清理阈值（防 map 无限增长；情景与关系共用）。
 	turnsPruneAt = 1024
 	// summarizeTimeout 是异步摘要超时（情景与关系共用）。
@@ -47,6 +51,10 @@ func (o *Orchestrator) maybeSummarize(ev port.Event) {
 			o.cfg.Logger.Warn("读取情景对话失败", "event_id", ev.ID, "err", err)
 			return
 		}
+		// 话题窗口：只摘要当前话题段，不把跨话题的消息算进一条情景。
+		if start, _ := prompt.SegmentBounds(recent, len(recent)-1); start > 0 {
+			recent = recent[start:]
+		}
 		if err := o.cfg.Episode.Summarize(ctx, ev, recent); err != nil {
 			o.cfg.Logger.Warn("生成情景记忆失败", "event_id", ev.ID, "err", err)
 		}
@@ -72,6 +80,62 @@ func (o *Orchestrator) episodesText(ctx context.Context, ev port.Event) string {
 		b.WriteString("- " + ep.Summary + "\n")
 	}
 	return b.String()
+}
+
+// maybeCloseTopic 在整会话静默 ≥TopicGap 后来了新消息时，把刚结束的上一段
+// 话题强制归档成情景记忆——"聊完就散"的话题不再受轮次限制（轮次归档只覆盖
+// 长对话；短对话往往聊完就停，靠这里兜住）。幂等：按段尾消息时间去重，每段
+// 只归档一次。材料用整会话流（群=全群消息，私聊=会话本身），与话题口径一致。
+func (o *Orchestrator) maybeCloseTopic(ev port.Event) {
+	if o.cfg.Episode == nil || o.cfg.History == nil {
+		return
+	}
+	scan, err := o.cfg.History.Recent(context.Background(), ev.TargetID, prompt.TopicScanLimit)
+	if err != nil || len(scan) < 2 {
+		return
+	}
+	start, _ := prompt.SegmentBounds(scan, len(scan)-1)
+	if start == 0 {
+		return // 当前消息就在会话开头：没有上一段话题
+	}
+	prevStart, prevEnd := prompt.SegmentBounds(scan, start-1)
+	prev := scan[prevStart:prevEnd]
+	if len(prev) < episodeMinMessages {
+		return // 没信息量，不值得归档
+	}
+	segEnd := scan[prevEnd-1].CreatedAt
+
+	o.episodeMu.Lock()
+	if o.topicArchived == nil {
+		o.topicArchived = make(map[string]time.Time)
+	}
+	if len(o.topicArchived) > turnsPruneAt {
+		o.topicArchived = make(map[string]time.Time)
+	}
+	if last, ok := o.topicArchived[ev.TargetID]; ok && last.Equal(segEnd) {
+		o.episodeMu.Unlock()
+		return // 这段话题已归档过
+	}
+	o.topicArchived[ev.TargetID] = segEnd
+	o.episodeMu.Unlock()
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), summarizeTimeout)
+		defer cancel()
+		if err := o.cfg.Episode.Summarize(ctx, ev, prev); err != nil {
+			o.cfg.Logger.Warn("话题归档生成情景记忆失败", "event_id", ev.ID, "err", err)
+		} else {
+			o.cfg.Logger.Info("话题已归档为情景记忆", "event_id", ev.ID, "messages", len(prev))
+		}
+	}()
+
+	// 新话题开始：情景轮次计数清零，不跨话题累计。
+	key := sessionKey(ev)
+	o.episodeMu.Lock()
+	if o.episodeTurns != nil {
+		o.episodeTurns[key] = 0
+	}
+	o.episodeMu.Unlock()
 }
 
 // sessionKey 是轮次计数器的键（场景 + 目标 + 发言人）。

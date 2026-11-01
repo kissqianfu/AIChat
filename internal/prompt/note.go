@@ -19,7 +19,14 @@ const (
 func (b *Builder) Note(ev port.Event) string {
 	note := ""
 	if ev.MessageType == 103 {
-		note += quoteNoteOf(ev.Elements)
+		if author, quoted, ok := firstQuote(ev); ok {
+			q := text.Truncate(quoted, maxQuoteRunes)
+			if author != "" {
+				note += "\n（引用 " + author + "：" + q + "）"
+			} else {
+				note += "\n（引用：" + q + "）"
+			}
+		}
 	}
 	if ev.MessageType == 3 {
 		note += arkNoteOf(ev.Ark)
@@ -27,9 +34,12 @@ func (b *Builder) Note(ev port.Event) string {
 	return note
 }
 
-// quoteNoteOf 取第一个被引用元素的文本，格式“（引用 张三：xxx）”；无文本返回空。
-func quoteNoteOf(elems []port.Element) string {
-	for _, e := range elems {
+// firstQuote 取第一条被引用元素的作者与正文全文（不截断，供旧话题锚点匹配用）。
+func firstQuote(ev port.Event) (author, quoted string, ok bool) {
+	if ev.MessageType != 103 {
+		return "", "", false
+	}
+	for _, e := range ev.Elements {
 		raw := firstText(e.Parts)
 		if raw == "" {
 			// 顶层没有文本段时往下找一层（引用的引用很少见，只递归一层够用）。
@@ -40,13 +50,9 @@ func quoteNoteOf(elems []port.Element) string {
 				continue
 			}
 		}
-		quoted := text.Truncate(raw, maxQuoteRunes)
-		if e.Author.Name != "" {
-			return "\n（引用 " + e.Author.Name + "：" + quoted + "）"
-		}
-		return "\n（引用：" + quoted + "）"
+		return e.Author.Name, raw, true
 	}
-	return ""
+	return "", "", false
 }
 
 // arkNoteOf 把卡片摘要注入输入：优先 fields.title；无标题时只报卡片类型。

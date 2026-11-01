@@ -5,6 +5,7 @@ package prompt
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/kissqianfu/aichat/internal/platform/text"
 	"github.com/kissqianfu/aichat/internal/port"
@@ -12,9 +13,7 @@ import (
 )
 
 const (
-	// groupPublicLimit 是群公共层消息数（docs/01 §2.2：最近 6 条群消息）。
-	groupPublicLimit = 6
-	// userExchangeLimit 是该用户与 Bot 的最近消息数。
+	// userExchangeLimit 是该用户与 Bot 的往来在当前话题内注入的上限。
 	userExchangeLimit = 8
 )
 
@@ -45,6 +44,10 @@ func New(cfg Config) *Builder {
 //
 // 群聊 = 群公共层（带发言人标签，理解氛围）+ 用户会话层（该用户与 Bot 的往来）；
 // 单聊 = 用户会话层。历史查询失败只告警，降级为无历史（不能因历史丢了本轮回复）。
+//
+// 话题窗口：整个会话（群=整群、私聊=会话本身）相邻消息间隔 ≥TopicGap 即视为
+// 话题结束——只有当前话题段的历史才注入；用户引用了旧话题消息时，把被引用
+// 消息所在的话题段作为"旧话题恢复"块一并注入。
 func (b *Builder) Messages(ctx context.Context, ev port.Event, userText, memText, mood string, images []port.ImageRef) []port.ChatMessage {
 	system := b.personaText()
 	if mood != "" {
@@ -71,21 +74,84 @@ func (b *Builder) Messages(ctx context.Context, ev port.Event, userText, memText
 		return append(messages, port.ChatMessage{Role: port.ChatRoleUser, Content: userText, Images: images})
 	}
 
+	// 群公共层：取宽窗口算话题边界，只注入当前话题段。
+	var boundary time.Time // 当前话题段起点；群层失败时零值，会话层退化为按自身间隔切
+	hasBoundary := false
 	if ev.Scene == port.SceneGroup {
-		public, err := b.cfg.History.Recent(ctx, ev.TargetID, groupPublicLimit)
+		pub, err := b.cfg.History.Recent(ctx, ev.TargetID, TopicScanLimit)
 		if err != nil {
 			b.cfg.Logger.Warn("读取群公共层失败，降级为无历史", "target_id", ev.TargetID, "err", err)
-		} else {
-			messages = append(messages, toChat(public, true)...)
+		} else if len(pub) > 0 {
+			start, _ := SegmentBounds(pub, len(pub)-1)
+			msgs := pub[start:]
+			if len(msgs) > topicGroupMax {
+				msgs = msgs[len(msgs)-topicGroupMax:]
+			}
+			messages = append(messages, toChat(msgs, true)...)
+			boundary, hasBoundary = pub[start].CreatedAt, true
 		}
 	}
-	exchange, err := b.cfg.History.RecentExchange(ctx, ev.TargetID, ev.Author.ID, userExchangeLimit)
+
+	// 旧话题恢复：用户引用了当前话题之外的消息时，把被引用消息所在话题段重新注入。
+	if block, ok := b.oldTopicBlock(ctx, ev, boundary, hasBoundary); ok {
+		messages = append(messages, block...)
+	}
+
+	exchange, err := b.cfg.History.RecentExchange(ctx, ev.TargetID, ev.Author.ID, TopicScanLimit)
 	if err != nil {
 		b.cfg.Logger.Warn("读取用户会话层失败，降级为无历史", "sender_id", ev.Author.ID, "err", err)
-	} else {
-		messages = append(messages, toChat(exchange, false)...)
+	} else if len(exchange) > 0 {
+		start, _ := SegmentBounds(exchange, len(exchange)-1)
+		// 群场景跟随整群的话题边界（比用户自己的间隔更晚就继续前推）；
+		// 单聊边界就是会话流自己的，start 已是当前段。
+		if hasBoundary {
+			for start < len(exchange) && exchange[start].CreatedAt.Before(boundary) {
+				start++
+			}
+		}
+		msgs := exchange[start:]
+		if len(msgs) > userExchangeLimit {
+			msgs = msgs[len(msgs)-userExchangeLimit:]
+		}
+		messages = append(messages, toChat(msgs, false)...)
 	}
 	return append(messages, port.ChatMessage{Role: port.ChatRoleUser, Content: userText, Images: images})
+}
+
+// oldTopicBlock 在用户引用了当前话题之外的消息时，返回旧话题恢复块：
+// 一条说明 + 被引用消息所在话题段的消息（时间正序，锚点前的上下文优先、后带 3 条）。
+// 引用不在当前话题外（上下文本来就有）或定位不到原消息时返回 ok=false，静默跳过。
+func (b *Builder) oldTopicBlock(ctx context.Context, ev port.Event, boundary time.Time, hasBoundary bool) ([]port.ChatMessage, bool) {
+	if ev.MessageType != 103 {
+		return nil, false
+	}
+	author, quoted, ok := firstQuote(ev)
+	if !ok {
+		return nil, false
+	}
+	scan, err := b.cfg.History.Recent(ctx, ev.TargetID, quoteScanLimit)
+	if err != nil || len(scan) == 0 {
+		return nil, false
+	}
+	idx := findQuoteAnchor(scan, ev.RefMsgIdx, author, quoted)
+	if idx < 0 {
+		return nil, false
+	}
+	// 锚点就在当前话题内：历史里本来就有，无需恢复。
+	if hasBoundary && !scan[idx].CreatedAt.Before(boundary) {
+		return nil, false
+	}
+	start, end := SegmentBounds(scan, idx)
+	if end > idx+4 {
+		end = idx + 4
+	}
+	if start < end-oldTopicMax {
+		start = end - oldTopicMax
+	}
+	block := append([]port.ChatMessage{{Role: port.ChatRoleSystem,
+		Content: "[旧话题恢复] 用户引用了下面这段较早的对话（时间正序），本次发言是在接着它说："}},
+		toChat(scan[start:end], ev.Scene == port.SceneGroup)...)
+	return block, true
 }
 
 // personaText 取当前生效的人设正文：热加载 Provider 优先，空串回退启动快照。

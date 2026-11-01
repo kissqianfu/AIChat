@@ -130,8 +130,9 @@ type Orchestrator struct {
 	cfg   Config
 	clock clock.Clock
 
-	episodeMu    sync.Mutex
-	episodeTurns map[string]int
+	episodeMu     sync.Mutex
+	episodeTurns  map[string]int
+	topicArchived map[string]time.Time // 每会话最近一次归档的话题段尾时间（去重）
 
 	relationshipMu    sync.Mutex
 	relationshipTurns map[string]int
@@ -380,6 +381,7 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 		// 私聊流式（docs/01 §2.8）：正文已随流送达，不再渲染/出站；
 		// 工具媒体（表情包等）仍以普通出站补发（额度在流式 Start 已记 1 次）。
 		o.cfg.Builder.Record(ctx, ev, userText, content)
+		o.maybeCloseTopic(ev)
 		o.extractAsync(ev, userText)
 		o.maybeSummarize(ev)
 		o.maybeSummarizeRelationship(ev)
@@ -414,6 +416,7 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	// 纯媒体回复也要在历史里留个记号，否则模型下一轮看不到自己刚发过语音，
 	// 很可能再发一遍。占位文本只进库，不发送。
 	o.cfg.Builder.Record(ctx, ev, userText, recordedReply(content, mediaBlocks))
+	o.maybeCloseTopic(ev)
 	o.extractAsync(ev, userText)
 	o.maybeSummarize(ev)
 	o.maybeSummarizeRelationship(ev)

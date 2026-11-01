@@ -110,3 +110,65 @@ func TestEpisodeDisabledWithoutTurns(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestMaybeCloseTopicArchivesPreviousSegment(t *testing.T) {
+	extractor := &fakeEpisodeExtractor{calls: make(chan int, 4)}
+	// 时间线：10:00/10:01 聊爬山（话题 A），静默 29 分钟后 10:30 新消息（话题 B）。
+	base := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
+	history := &fakeHistory{pub: []port.HistoryMessage{
+		{SenderName: "小明", Direction: "in", Content: "今天下午去爬山吗", CreatedAt: base},
+		{Direction: "out", Content: "去啊", CreatedAt: base.Add(time.Minute)},
+		{SenderName: "小明", Direction: "in", Content: "晚饭吃什么", CreatedAt: base.Add(30 * time.Minute)},
+	}}
+	model := &fakeModel{resp: &port.ChatResponse{Content: "嗯"}}
+	o, err := New(Config{Model: model, Persona: "p", Episode: extractor, History: history})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := o.Replies(context.Background(), messageEvent()); err != nil {
+		t.Fatalf("Replies() error = %v", err)
+	}
+	select {
+	case n := <-extractor.calls:
+		if n != 2 {
+			t.Fatalf("归档材料条数 = %d, want 2（上一段话题）", n)
+		}
+		if len(extractor.recent) != 2 || extractor.recent[0].Content != "今天下午去爬山吗" {
+			t.Fatalf("归档材料应是上一段话题: %+v", extractor.recent)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("静默后新消息未触发话题归档")
+	}
+
+	// 同一段话题不重复归档（去重）。
+	if _, err := o.Replies(context.Background(), messageEvent()); err != nil {
+		t.Fatalf("Replies() #2 error = %v", err)
+	}
+	select {
+	case n := <-extractor.calls:
+		t.Fatalf("重复归档了（材料 %d 条）", n)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestMaybeCloseTopicSkipsWithoutGap(t *testing.T) {
+	extractor := &fakeEpisodeExtractor{calls: make(chan int, 2)}
+	base := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
+	history := &fakeHistory{pub: []port.HistoryMessage{
+		{SenderName: "小明", Direction: "in", Content: "你好", CreatedAt: base.Add(-time.Minute)},
+		{SenderName: "小明", Direction: "in", Content: "还在吗", CreatedAt: base},
+	}}
+	model := &fakeModel{resp: &port.ChatResponse{Content: "嗯"}}
+	o, err := New(Config{Model: model, Persona: "p", Episode: extractor, History: history})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := o.Replies(context.Background(), messageEvent()); err != nil {
+		t.Fatalf("Replies() error = %v", err)
+	}
+	select {
+	case n := <-extractor.calls:
+		t.Fatalf("会话没有静默间隔也归档了（%d 条）", n)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
