@@ -103,6 +103,12 @@ func (t *streamTee) tryStream(ctx context.Context, req port.ChatRequest) (*port.
 		}
 		if delta.Content != "" && len(toolCalls) == 0 {
 			pending := content.String() + delta.Content
+			// 工具调用标记当正文流出（禁工具档位模型手写调用语法）：流式无法擦除
+			// 已发内容，放弃流式回退普通路径，由出口剥离统一处理（toolguard.go）。
+			if hasToolMarkup(pending) {
+				t.abortIfStarted(ctx, started)
+				return nil, errors.New("streamTee: 正文出现工具调用标记，放弃流式")
+			}
 			if safe, reason := safety.Check(pending); !safe {
 				// 增量把关：不安全内容绝不流出（已流出部分 Abort），
 				// 回退普通路径由 safety.Check 替换为提示语。

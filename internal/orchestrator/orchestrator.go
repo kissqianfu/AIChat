@@ -308,8 +308,14 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	if streamModel := newStreamTee(model, o.cfg.Streamer, ev, policy.Caps.MaxReplyRunes, takeSeq, audioSent.Load); streamModel != model {
 		model = streamModel
 	}
+	msgs := o.cfg.Builder.Messages(ctx, ev, userText+mediaNote, memText, mood, images)
+	if !allowTools {
+		// 人设里始终写着工具用法，而本轮请求不带工具定义——不点破的话模型会手写
+		// 调用语法当正文（见 toolguard.go 顶部说明）。
+		msgs = withSystemNote(msgs, noToolsNote)
+	}
 	resp, mediaBlocks, err := o.chatWithTools(toolCtx, model, port.ChatRequest{
-		Messages:  o.cfg.Builder.Messages(ctx, ev, userText+mediaNote, memText, mood, images),
+		Messages:  msgs,
 		MaxTokens: 1024,
 	}, ev.Scene, allowTools, &audioSent)
 	if err != nil {
@@ -324,9 +330,22 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	if audioSent.Load() {
 		content = "" // 见上：语音已发出，正文按内部记录处理，不发
 	}
+	// 工具调用文本兜底剥离（2026-11-02）：禁工具档位下模型会把 <tool_use>/DSML
+	// 语法手写进正文，这类标记对用户是纯噪音，剥掉；剥完为空按"本轮没说话"处理。
+	stripped, hadMarkup := stripToolMarkup(content)
+	if hadMarkup {
+		o.cfg.Logger.Warn("正文出现工具调用标记，已剥离", "event_id", ev.ID, "rest_empty", stripped == "")
+		content = stripped
+	}
 	// 纯媒体回复是合法的：模型只调了 send_voice / sticker_pick / image_gen 而没说话。
 	// 文本与媒体都空才是真异常（否则"别预告动作"的引导会让整条语音一起被丢）。
+	// 例外：只因剥离工具标记才变空——这是模型试图调一个不可用的工具，静默即可。
 	if content == "" && len(mediaBlocks) == 0 {
+		if hadMarkup {
+			o.cfg.Builder.Record(ctx, ev, userText, "")
+			o.cfg.Logger.Info("本轮只剩工具调用文本，已静默", "event_id", ev.ID)
+			return nil, ErrIgnored
+		}
 		return nil, errors.New("orchestrator: 模型返回空内容")
 	}
 	// [SKIP] 自决协议（2026-11-01）：群普通消息直接进主模型，模型自己决定要不要插话；
