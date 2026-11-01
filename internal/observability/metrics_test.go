@@ -8,6 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/kissqianfu/aichat/internal/billing"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/port"
 )
@@ -235,33 +236,59 @@ func TestStreamUsageTapRecordsTokens(t *testing.T) {
 	}
 }
 
-// TestSetBalance 锁住余额打点：一次写三条 gauge，可用位是 0/1，失败单独计数。
-// 余额是官方返回值（绝对值覆盖），所以这里断言绝对值而不是增量。
-func TestSetBalance(t *testing.T) {
-	SetBalance("CNY", 110.5, 10, 100.5)
-	if got := testutil.ToFloat64(deepseekBalance.WithLabelValues("CNY", "total")); got != 110.5 {
-		t.Fatalf("balance{CNY,total} = %v, want 110.5", got)
+// TestRecordBalance 锁住余额打点：一次写多条明细、available 是 0/1、失败按 provider 计数。
+//
+// 余额是官方返回值（绝对值覆盖），所以断言绝对值而不是增量。
+// 重点锁两件事：①同一 gauge 靠 unit 区分「人民币」与「积分」，写错单位会和钱加到一起；
+// ②一家的可用位不能影响另一家（DeepSeek 欠费不该把 Breeze 也标成不可用）。
+func TestRecordBalance(t *testing.T) {
+	RecordBalance("test-deepseek", &billing.Snapshot{
+		Available: true,
+		Entries: []billing.BalanceEntry{
+			{Unit: billing.CNY, Kind: billing.KindTotal, Value: 110.5},
+			{Unit: billing.CNY, Kind: billing.KindGranted, Value: 10},
+			{Unit: billing.CNY, Kind: billing.KindToppedUp, Value: 100.5},
+		},
+	})
+	for kind, want := range map[string]float64{
+		billing.KindTotal: 110.5, billing.KindGranted: 10, billing.KindToppedUp: 100.5,
+	} {
+		if got := testutil.ToFloat64(accountBalance.WithLabelValues("test-deepseek", "CNY", kind)); got != want {
+			t.Fatalf("balance{test-deepseek,CNY,%s} = %v, want %v", kind, got, want)
+		}
 	}
-	if got := testutil.ToFloat64(deepseekBalance.WithLabelValues("CNY", "granted")); got != 10 {
-		t.Fatalf("balance{CNY,granted} = %v, want 10", got)
-	}
-	if got := testutil.ToFloat64(deepseekBalance.WithLabelValues("CNY", "topped_up")); got != 100.5 {
-		t.Fatalf("balance{CNY,topped_up} = %v, want 100.5", got)
+	if got := testutil.ToFloat64(accountAvailable.WithLabelValues("test-deepseek")); got != 1 {
+		t.Fatalf("available{test-deepseek} = %v, want 1", got)
 	}
 
-	SetBalanceAvailable(true)
-	if got := testutil.ToFloat64(deepseekAvailable); got != 1 {
-		t.Fatalf("available = %v, want 1", got)
+	// 积分类账户：同一个 gauge，unit=credit。写成 CNY 就会和余额相加。
+	RecordBalance("test-breeze", &billing.Snapshot{
+		Available: false,
+		Entries:   []billing.BalanceEntry{{Unit: billing.Credit, Kind: billing.KindTotal, Value: 4017.4}},
+	})
+	if got := testutil.ToFloat64(accountBalance.WithLabelValues("test-breeze", "credit", "total")); got != 4017.4 {
+		t.Fatalf("balance{test-breeze,credit,total} = %v, want 4017.4", got)
 	}
-	SetBalanceAvailable(false)
-	if got := testutil.ToFloat64(deepseekAvailable); got != 0 {
-		t.Fatalf("available = %v, want 0", got)
+	if got := testutil.ToFloat64(accountAvailable.WithLabelValues("test-breeze")); got != 0 {
+		t.Fatalf("available{test-breeze} = %v, want 0", got)
+	}
+	if got := testutil.ToFloat64(accountAvailable.WithLabelValues("test-deepseek")); got != 1 {
+		t.Fatalf("breeze 没钱不该影响 deepseek 的可用位，实得 %v", got)
 	}
 
-	before := testutil.ToFloat64(deepseekBalanceErrors)
-	CountBalanceError()
-	CountBalanceError()
-	if got := testutil.ToFloat64(deepseekBalanceErrors) - before; got != 2 {
-		t.Fatalf("balance_errors 增量 = %v, want 2", got)
+	MarkBalanceUpdated("test-breeze", time.Unix(1700000000, 0))
+	if got := testutil.ToFloat64(accountBalanceAt.WithLabelValues("test-breeze")); got != 1700000000 {
+		t.Fatalf("updated_at = %v, want 1700000000", got)
+	}
+
+	before := testutil.ToFloat64(accountBalanceErrors.WithLabelValues("test-deepseek"))
+	CountBalanceError("test-deepseek")
+	CountBalanceError("test-deepseek")
+	CountBalanceError("test-breeze")
+	if got := testutil.ToFloat64(accountBalanceErrors.WithLabelValues("test-deepseek")) - before; got != 2 {
+		t.Fatalf("balance_errors{test-deepseek} 增量 = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(accountBalanceErrors.WithLabelValues("test-breeze")); got != 1 {
+		t.Fatalf("balance_errors{test-breeze} = %v, want 1（按 provider 分开计数）", got)
 	}
 }

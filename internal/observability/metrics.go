@@ -79,26 +79,30 @@ var (
 		Name: "aichat_interject_skip_total",
 		Help: "模型 [SKIP] 自决沉默次数",
 	})
-	// DeepSeek 账户余额（2026-11-01）：查官方 GET /user/balance，是真实扣费结果，
-	// 不依赖单价表。看板看两个东西——还剩多少、以及曲线下降的斜率（≈ 消耗速度）。
-	deepseekBalance = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "aichat_deepseek_balance",
-		Help: "DeepSeek 账户余额（kind: total=总可用 / granted=赠金 / topped_up=充值；随币种）",
-	}, []string{"currency", "kind"})
-	deepseekAvailable = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "aichat_deepseek_balance_available",
-		Help: "DeepSeek 账户是否还有余额可调用（1=可用，0=余额不足）",
-	})
-	deepseekBalanceErrors = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "aichat_deepseek_balance_errors_total",
+	// 账户余额（2026-11-01）：查各家官方余额接口，是真实扣费结果，不依赖单价表。
+	// 看板看两个东西——还剩多少、以及曲线下降的斜率（≈ 消耗速度）。
+	//
+	// provider 维度是接第二家（Breeze 积分）时补的：原来叫 aichat_deepseek_balance，
+	// 再多接一家就得复制一套指标名和一份轮询代码。unit 区分 CNY 与 credit——
+	// 积分和人民币不是一回事，看板必须分行，不能相加。
+	accountBalance = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "aichat_balance",
+		Help: "账户余额（provider: deepseek/breeze；unit: CNY/USD/credit；kind: total/granted/topped_up）",
+	}, []string{"provider", "unit", "kind"})
+	accountAvailable = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "aichat_balance_available",
+		Help: "账户是否还有余额可调用（1=可用，0=余额不足）",
+	}, []string{"provider"})
+	accountBalanceErrors = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "aichat_balance_errors_total",
 		Help: "余额查询失败数（鉴权/网络/接口变更；看板余额断更先看这里）",
-	})
+	}, []string{"provider"})
 	// 余额时间戳：告警判断「余额数据是否停更」用。余额本身可以是稳定值，
 	// 光看它是看不出「查询已经挂了三天」的——而余额停了恰恰意味着余额告警失效。
-	deepseekBalanceAt = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "aichat_deepseek_balance_updated_timestamp_seconds",
+	accountBalanceAt = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "aichat_balance_updated_timestamp_seconds",
 		Help: "余额最近一次成功查询的 Unix 时间戳（秒）",
-	})
+	}, []string{"provider"})
 	// 计费（2026-11-01）：按 protocol 分账的估算额度。它是「估算」，不是账单——
 	// 对账看上面的官方余额。unit 是计量单位：CNY / USD / credit（积分），
 	// 不同 unit 的数值不能相加，看板要分行展示。
@@ -208,33 +212,48 @@ func ObserveMediaCall(slot LLMSlot, start time.Time, err error) {
 // CountInterjectSkip 计数模型 [SKIP] 自决沉默。
 func CountInterjectSkip() { interjectSkipTotal.Inc() }
 
-// SetBalance 记录某币种的账户余额（一次写 total / granted / topped_up 三条）。
+// RecordBalance 记录一次余额查询结果（一次写多条明细）。
 //
 // 余额是官方返回值，不做任何推算：它只随真实扣费变化，所以看板上曲线的斜率
 // 就是消耗速度——这比在进程内按单价算花费可靠得多（不需要维护价格表）。
-func SetBalance(currency string, total, granted, toppedUp float64) {
-	if currency == "" {
-		currency = "unknown"
+// provider 由配置给（deepseek / breeze），unit 由各家实现决定（CNY / credit）。
+func RecordBalance(provider string, snap *billing.Snapshot) {
+	if provider == "" {
+		provider = "unknown"
 	}
-	deepseekBalance.WithLabelValues(currency, "total").Set(total)
-	deepseekBalance.WithLabelValues(currency, "granted").Set(granted)
-	deepseekBalance.WithLabelValues(currency, "topped_up").Set(toppedUp)
-}
-
-// SetBalanceAvailable 记录账户当前是否还有余额可调用。
-func SetBalanceAvailable(ok bool) {
-	if ok {
-		deepseekAvailable.Set(1)
+	if snap == nil {
 		return
 	}
-	deepseekAvailable.Set(0)
+	if snap.Available {
+		accountAvailable.WithLabelValues(provider).Set(1)
+	} else {
+		accountAvailable.WithLabelValues(provider).Set(0)
+	}
+	for _, e := range snap.Entries {
+		unit := string(e.Unit)
+		if unit == "" {
+			unit = "unknown"
+		}
+		kind := e.Kind
+		if kind == "" {
+			kind = billing.KindTotal
+		}
+		accountBalance.WithLabelValues(provider, unit, kind).Set(e.Value)
+	}
 }
 
 // MarkBalanceUpdated 记录余额最近一次成功查询的时刻（告警用它判「数据断更」）。
-func MarkBalanceUpdated(at time.Time) { deepseekBalanceAt.Set(float64(at.Unix())) }
+func MarkBalanceUpdated(provider string, at time.Time) {
+	accountBalanceAt.WithLabelValues(provider).Set(float64(at.Unix()))
+}
 
 // CountBalanceError 计数余额查询失败。
-func CountBalanceError() { deepseekBalanceErrors.Inc() }
+func CountBalanceError(provider string) {
+	if provider == "" {
+		provider = "unknown"
+	}
+	accountBalanceErrors.WithLabelValues(provider).Inc()
+}
 
 // SetQueueDepth 设置事件队列深度。
 func SetQueueDepth(n int) { queueDepth.Set(float64(n)) }

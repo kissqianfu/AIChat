@@ -87,13 +87,19 @@ imagegen:
   enabled: false                   # 默认关
   max_per_day: 10                  # 每人/每群每天上限
 
-# DeepSeek 账户余额（GET /user/balance）：只读展示，看板显示"还剩多少钱"，
-# 以及余额曲线下降的斜率＝真实消耗速度。不维护单价表，所以不会算错。
+# 账户余额：只读展示「还剩多少」，以及余额曲线下降的斜率＝真实消耗速度。
+# 它不维护单价表，所以不会算错；对账看它，估算看 aichat_billing_amount_total。
+# 一家一个账户：DeepSeek 是人民币，Breeze 是积分，单位不同，看板分行、不能相加。
 balance:
-  enabled: true                    # 关掉就不发这个请求
+  enabled: true                    # 关掉就不发这些请求
   interval_minutes: 10             # 每 N 分钟查一次（下限 1）
-  base_url: ""                     # 留空 = 跟随 models.chat.fast
-  api_key_name: ""                 # 留空 = 跟随 models.chat.fast
+  accounts:
+    - provider: deepseek           # 必填：deepseek / breeze（决定用哪家的余额接口）
+      base_url: ""                 # 留空 = 该 provider 的默认端点
+      api_key_name: deepseek       # → api_key 表，必填
+    # - provider: breeze           # 积分账户（GET /v1/balance，xi-api-key 认证）
+    #   base_url: https://api.breeze.blue/v1
+    #   api_key_name: breezeblue
 
 
 # 模型槽位：每个引用自带 base_url 与 api_key_name（→ api_key 表）。

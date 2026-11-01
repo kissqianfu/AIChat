@@ -80,11 +80,19 @@ imagegen:
   enabled: false             # 默认关（成本）；模型经 image_gen 工具自行判断（按用户日配额）
   max_per_day: 10            # 每人每天上限
 
-# DeepSeek 账户余额：查官方 GET /user/balance，看板展示"还剩多少"与下降斜率（≈消耗速度）。
-# 只读、不影响任何链路；base_url/api_key_name 留空 = 跟随 models.chat.fast。
+# 账户余额：查各家的官方余额接口，看板展示"还剩多少"与下降斜率（≈消耗速度）。
+# 只读、不影响任何链路。一家一个账户——DeepSeek 是人民币（¥），Breeze 是积分（credit），
+# 单位不同，看板分行展示、不能相加；告警阈值也各按各的单位定。
 balance:
   enabled: true
   interval_minutes: 10
+  accounts:
+    - provider: deepseek              # GET /user/balance（Bearer 认证）
+      base_url: ""                    # 留空 = https://api.deepseek.com
+      api_key_name: deepseek
+    - provider: breeze                # GET /v1/balance（xi-api-key 认证），积分制
+      base_url: https://api.breeze.blue/v1
+      api_key_name: breezeblue
 
 # 模型槽位（2026-10-31 由 models.yaml 并入，docs/08 §2.5）：
 # 每个引用自带 protocol、base_url 与 api_key_name（→ api_key 表的 name），不再有 providers 中转。

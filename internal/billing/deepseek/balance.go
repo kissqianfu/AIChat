@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/kissqianfu/aichat/internal/billing"
 )
 
 // balanceMaxBody 限制余额响应读取（这个响应很小，给 64KiB 富余）。
@@ -106,6 +108,33 @@ func (b BalanceInfo) Amount(field string) (float64, error) {
 		return 0, fmt.Errorf("deepseek: 金额 %q 不是数字: %w", raw, err)
 	}
 	return v, nil
+}
+
+// FetchSnapshot 是给统一余额层（billing.BalanceFetcher）用的出口：
+// 把带币种的原生响应压平成「单位 + 明细」，让轮询代码不用认识 DeepSeek 的字段。
+//
+// 保留 FetchBalance 返回原生结构：字段形状有测试锁着（官方改字段名时那种
+// 测试先炸），而这个函数只做搬运。
+func FetchSnapshot(ctx context.Context, client *http.Client, baseURL, apiKey string) (*billing.Snapshot, error) {
+	b, err := FetchBalance(ctx, client, baseURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	snap := &billing.Snapshot{Available: b.IsAvailable}
+	for _, info := range b.BalanceInfos {
+		unit := billing.Unit(strings.TrimSpace(info.Currency))
+		if unit == "" {
+			unit = billing.CNY // 币种缺失时按人民币：当前账户就这一种
+		}
+		for _, kind := range []string{billing.KindTotal, billing.KindGranted, billing.KindToppedUp} {
+			v, err := info.Amount(kind)
+			if err != nil {
+				return nil, err
+			}
+			snap.Entries = append(snap.Entries, billing.BalanceEntry{Unit: unit, Kind: kind, Value: v})
+		}
+	}
+	return snap, nil
 }
 
 // truncateForLog 截断错误响应体，避免把整页 HTML 灌进日志。
