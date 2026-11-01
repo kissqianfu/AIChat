@@ -179,46 +179,6 @@ func TestValidateHoursWindows(t *testing.T) {
 	}
 }
 
-// balance.accounts 是接第二家余额（Breeze 积分）时加的：provider 同时是 Prometheus
-// 的 label，同一家配两次会写进同一组序列、互相盖数字——必须在配置阶段拦掉。
-func TestValidateBalanceAccounts(t *testing.T) {
-	base := func(accounts ...BalanceAccount) Config {
-		c := validConfig()
-		c.Balance = BalanceConfig{Enabled: true, IntervalMinutes: 10, Accounts: accounts}
-		return c
-	}
-
-	both := base(
-		BalanceAccount{Provider: "deepseek", APIKeyName: "deepseek"},
-		BalanceAccount{Provider: "Breeze", APIKeyName: "breezeblue"},
-	)
-	if err := both.Validate(); err != nil {
-		t.Fatalf("两个不同 provider（大小写不同）应通过：%v", err)
-	}
-
-	cases := []struct {
-		name string
-		cfg  Config
-		want string
-	}{
-		{"重复 provider（大小写不敏感）", base(
-			BalanceAccount{Provider: "deepseek", APIKeyName: "a"},
-			BalanceAccount{Provider: "DeepSeek", APIKeyName: "b"},
-		), "重复"},
-		{"provider 为空", base(BalanceAccount{APIKeyName: "a"}), "provider 不能为空"},
-		{"缺 api_key_name", base(BalanceAccount{Provider: "deepseek"}), "api_key_name"},
-		{"base_url 不是 URL", base(BalanceAccount{
-			Provider: "breeze", APIKeyName: "k", BaseURL: "api.breeze.blue/v1",
-		}), "base_url"},
-		{"开了但没配账户", base(), "accounts 为空"},
-	}
-	for _, tc := range cases {
-		if err := tc.cfg.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Fatalf("%s：Validate() = %v，应含 %q", tc.name, err, tc.want)
-		}
-	}
-}
-
 // base_url 是**端点地址**，不是厂商名。线上真踩过：写 base_url: qianwen 想表达
 // "用千问"，结果请求发到 "qianwen/api/v1/..."，报 unsupported protocol scheme。
 // 同时锁住另一半：写了 protocol 就可以省 base_url（用该家默认端点）。

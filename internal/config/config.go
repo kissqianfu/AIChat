@@ -25,7 +25,6 @@ type Config struct {
 	Hours    HoursConfig     `yaml:"hours"`
 	Sticker  StickerConfig   `yaml:"sticker"`
 	ImageGen ImageGenConfig  `yaml:"imagegen"`
-	Balance  BalanceConfig   `yaml:"balance"`
 
 	// SourcePath 是配置文件来源路径（Load 填写；LoadBytes 为空）。
 	// registry 热加载监听同一个文件，只取 models 段。
@@ -178,33 +177,6 @@ type StickerConfig struct {
 type ImageGenConfig struct {
 	Enabled   bool `yaml:"enabled"`
 	MaxPerDay int  `yaml:"max_per_day"` // 每群/每人每天上限
-}
-
-// BalanceConfig 是账户余额查询（2026-11-01）：每个 account 查一家的官方余额接口。
-//
-// 只读展示：每 interval_minutes 拉一次，暴露成 gauge 供看板看"还剩多少"、
-// 以及余额的下降斜率（≈ 真实消耗速度）。它替代不了官方账单，但**不需要维护单价表**，
-// 所以不会因为调价或单位换算说假话——这是它比自算费用更可靠的地方。
-//
-// 做成一串 account 而不是单个账户：余额是账户级的、每家一份，接第二家
-// （Breeze 积分）时不该出现第二份轮询代码和第二套指标名。各家单位不同
-// （CNY / credit），所以看板要按 unit 分行，不能相加。
-type BalanceConfig struct {
-	Enabled         bool `yaml:"enabled"`
-	IntervalMinutes int  `yaml:"interval_minutes"` // 0 = 10 分钟；下限 1
-	// Accounts 为空的账户列表：开着但没配 = 什么都不查（启动日志会警告）。
-	Accounts []BalanceAccount `yaml:"accounts"`
-}
-
-// BalanceAccount 是一个要查余额的账户。
-type BalanceAccount struct {
-	// Provider 决定用哪家的余额接口实现：deepseek / breeze（大小写不敏感）。
-	// 写错会在启动日志里报「没有这个 provider 的余额实现」，不会静默跳过。
-	Provider string `yaml:"provider"`
-	// BaseURL 留空 = 该 provider 的默认端点（各家的余额路径层级不同，由实现自己拼）。
-	BaseURL string `yaml:"base_url"`
-	// APIKeyName 是 api_key 表里的 name（必填）。
-	APIKeyName string `yaml:"api_key_name"`
 }
 
 // Default 返回带全套默认值的配置；调用方应在 Unmarshal 之前先用它。

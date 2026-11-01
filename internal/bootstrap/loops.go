@@ -14,6 +14,7 @@ import (
 	"github.com/kissqianfu/aichat/internal/balance"
 	"github.com/kissqianfu/aichat/internal/balance/breeze"
 	"github.com/kissqianfu/aichat/internal/balance/deepseek"
+	"github.com/kissqianfu/aichat/internal/llm/protocol"
 	"github.com/kissqianfu/aichat/internal/observability"
 	"github.com/kissqianfu/aichat/internal/platform/clock"
 	"github.com/kissqianfu/aichat/internal/platform/httpclient"
@@ -21,7 +22,7 @@ import (
 	"github.com/kissqianfu/aichat/internal/schedule"
 )
 
-// balanceDefaultInterval 是未配置 interval_minutes 时的查询间隔。
+// balanceDefaultInterval 是余额查询间隔（不可配）。
 // 余额不会因为一分钟的延迟而失真，查勤了只是白打请求。
 const balanceDefaultInterval = 10 * time.Minute
 
@@ -34,49 +35,53 @@ var balanceFetchers = map[string]balance.BalanceFetcher{
 	"breeze":   breeze.FetchSnapshot,
 }
 
-// balanceTarget 是一个待查询的账户（配置归一化后的形态）。
+// balanceTarget 是一个待查询的账户（从 models 槽位反推出来的形态）。
 type balanceTarget struct {
 	provider   string
-	baseURL    string
 	apiKeyName string
 }
 
-// startBalanceLoop 定时查各账户余额（2026-11-01，同日泛化到多 provider）。
+// balanceSlots 是参与反推的槽位：models 里配了谁，就查谁的余额。
+var balanceSlots = []string{"chat.fast", "chat.strong", "vision", "asr", "tts", "imagegen", "search"}
+
+// startBalanceLoop 定时查各账户余额（2026-11-01）。
 //
-// 余额是官方扣费结果，用来对账与告警（剩多少、掉多快）；token 计价是估算，
-// 花费只认它：进程内不做任何估算。
+// 余额是官方扣费结果，用来对账与告警（剩多少、掉多快）；进程内不做任何估算。
 //
-// 一家一个账户，各查各的：DeepSeek 是人民币，Breeze 是积分，两者不能相加。
-// 失败只计数与告警，不影响任何业务链路，也不重试（下一轮自然再查）。
+// 不再单独配 balance.accounts：**models 调用了谁，就查谁的余额**——从各槽位
+// 的 protocol 反推账户（deepseek → 人民币、breeze → 积分），密钥直接用该槽位
+// 的 api_key_name。没有余额实现的协议（qianwen/openai/elevenlabs）跳过并记
+// 一行 INFO。失败只计数与告警，不影响任何业务链路，也不重试（下一轮自然再查）。
 func (w *wiring) startBalanceLoop(ctx context.Context) {
-	cfg := w.cfg.Balance
-	if !cfg.Enabled {
-		return
-	}
-	targets := make([]balanceTarget, 0, len(cfg.Accounts))
-	for _, a := range cfg.Accounts {
-		t := balanceTarget{
-			provider:   strings.ToLower(strings.TrimSpace(a.Provider)),
-			baseURL:    strings.TrimSpace(a.BaseURL),
-			apiKeyName: strings.TrimSpace(a.APIKeyName),
-		}
-		if _, ok := balanceFetchers[t.provider]; !ok {
-			// 拼错 provider 会静默不查 → 看板上那家永远没有数据。这里必须吵。
-			w.logger.Error("余额账户的 provider 没有实现，已跳过",
-				"provider", t.provider, "已支持", balanceProviderNames())
+	targets := make([]balanceTarget, 0, 2)
+	seen := make(map[string]bool, len(balanceSlots))
+	for _, slot := range balanceSlots {
+		ref, ok := w.reg.SlotModel(slot)
+		if !ok {
 			continue
 		}
-		targets = append(targets, t)
+		proto := strings.ToLower(strings.TrimSpace(protocol.Or(ref.Protocol, protocol.DefaultFor(slot))))
+		if proto == "" || seen[proto] {
+			continue
+		}
+		seen[proto] = true
+		if _, ok := balanceFetchers[proto]; !ok {
+			w.logger.Info("该协议没有余额实现，不查余额（不影响调用）",
+				"slot", slot, "protocol", proto, "已支持", balanceProviderNames())
+			continue
+		}
+		targets = append(targets, balanceTarget{
+			provider:   proto,
+			apiKeyName: strings.TrimSpace(ref.APIKeyName),
+		})
 	}
 	if len(targets) == 0 {
-		w.logger.Warn("balance.enabled 已开但没有可查的账户，余额不会被更新（看板会显示断更）")
+		w.logger.Warn("models 槽位里没有可查余额的协议，余额不会被更新（看板会显示断更）",
+			"已支持", balanceProviderNames())
 		return
 	}
 
-	interval := time.Duration(cfg.IntervalMinutes) * time.Minute
-	if interval <= 0 {
-		interval = balanceDefaultInterval
-	}
+	interval := balanceDefaultInterval
 	client := httpclient.New(15 * time.Second)
 
 	fetchAll := func(runCtx context.Context) error {
@@ -91,6 +96,12 @@ func (w *wiring) startBalanceLoop(ctx context.Context) {
 		}
 		return firstErr
 	}
+
+	names := make([]string, 0, len(targets))
+	for _, t := range targets {
+		names = append(names, t.provider+"(key="+t.apiKeyName+")")
+	}
+	w.logger.Info("余额查询已启动", "providers", strings.Join(names, " "), "interval", interval)
 
 	// 启动即查一次，否则头 interval 分钟内看板是空的。
 	go func() {
@@ -116,7 +127,7 @@ func (w *wiring) fetchBalance(ctx context.Context, client *http.Client, t balanc
 		observability.CountBalanceError(t.provider)
 		return fmt.Errorf("取密钥 %q: %w", t.apiKeyName, err)
 	}
-	snap, err := fetch(ctx, client, t.baseURL, key)
+	snap, err := fetch(ctx, client, "", key)
 	if err != nil {
 		observability.CountBalanceError(t.provider)
 		return err

@@ -23,7 +23,6 @@ func (c *Config) Validate() error {
 	validateModels(&c.Models, add)
 	validateSticker(&c.Sticker, add)
 	validateImageGen(&c.ImageGen, add)
-	validateBalance(&c.Balance, add)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config: %d 处配置不合法:\n- %s", len(errs), strings.Join(errs, "\n- "))
@@ -255,43 +254,6 @@ func validateSticker(c *StickerConfig, add func(string, ...any)) {
 func validateImageGen(c *ImageGenConfig, add func(string, ...any)) {
 	if c.MaxPerDay <= 0 || c.MaxPerDay > 100 {
 		add("imagegen.max_per_day 必须在 (0, 100]，当前 %d", c.MaxPerDay)
-	}
-}
-
-// validateBalance 校验余额查询：关着就完全不看，开着才要求账户配好。
-//
-// provider 是否真的被支持由 bootstrap 判断（config 不该认识子系统有哪些实现），
-// 这里只管「有没有填、有没有重复、URL 像不像 URL」。
-func validateBalance(c *BalanceConfig, add func(string, ...any)) {
-	if !c.Enabled {
-		return
-	}
-	if c.IntervalMinutes < 0 || c.IntervalMinutes > 24*60 {
-		add("balance.interval_minutes 必须在 [0, 1440]，当前 %d（0 = 用默认 10 分钟）", c.IntervalMinutes)
-	}
-	if len(c.Accounts) == 0 {
-		add("balance.enabled 已开，但 balance.accounts 为空（开了就什么都不查，多半是漏配）")
-		return
-	}
-	seen := make(map[string]bool, len(c.Accounts))
-	for i, a := range c.Accounts {
-		name := strings.ToLower(strings.TrimSpace(a.Provider))
-		if name == "" {
-			add("balance.accounts[%d].provider 不能为空（如 deepseek / breeze）", i)
-			continue
-		}
-		if seen[name] {
-			// provider 同时是指标 label：同一家配两次会写进同一组序列，
-			// 后一轮把前一轮的数字盖掉，看起来像"余额在跳"。
-			add("balance.accounts[%d].provider %q 重复（同一家只能配一个账户）", i, name)
-		}
-		seen[name] = true
-		if strings.TrimSpace(a.APIKeyName) == "" {
-			add("balance.accounts[%d](%s).api_key_name 不能为空（→ api_key 表）", i, name)
-		}
-		if a.BaseURL != "" && !strings.HasPrefix(a.BaseURL, "http://") && !strings.HasPrefix(a.BaseURL, "https://") {
-			add("balance.accounts[%d].base_url 必须以 http:// 或 https:// 开头，当前 %q", i, a.BaseURL)
-		}
 	}
 }
 

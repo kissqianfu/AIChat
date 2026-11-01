@@ -87,18 +87,6 @@ imagegen:
   enabled: false                   # 默认关
   max_per_day: 10                  # 每人/每群每天上限
 
-# 账户余额
-balance:
-  enabled: true                    # 关掉就不发这些请求
-  interval_minutes: 10             # 每 N 分钟查一次（下限 1）
-  accounts:
-    - provider: deepseek           # 必填：deepseek / breeze（决定用哪家的余额接口）
-      base_url: ""                 # 留空 = 该 provider 的默认端点
-      api_key_name: deepseek       # → api_key 表，必填
-    # - provider: breeze           # 积分账户（GET /v1/balance，xi-api-key 认证）
-    #   base_url: https://api.breeze.blue/v1
-    #   api_key_name: breezeblue
-
 models:
   chat:
     # 日常闲聊，protocol:deepseek（默认）| openai | qianwen
