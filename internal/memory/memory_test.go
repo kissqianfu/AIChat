@@ -20,7 +20,7 @@ func (f *fakeModel) Stream(context.Context, port.ChatRequest) (port.ChatStream, 
 }
 
 func testExtractor(content string) *Extractor {
-	return NewExtractor(func(context.Context) (port.ChatModel, error) { return &fakeModel{content: content}, nil }, nil)
+	return NewExtractor(func(context.Context) (port.ChatModel, error) { return &fakeModel{content: content}, nil })
 }
 
 func TestShouldExtract(t *testing.T) {

@@ -52,7 +52,7 @@ func (f *fakeRelModel) Stream(context.Context, port.ChatRequest) (port.ChatStrea
 
 func newRelEngine(store RelationshipStore, model *fakeRelModel) *RelationshipEngine {
 	return NewRelationshipEngine(store, func(context.Context) (port.ChatModel, error) { return model, nil },
-		nil, clock.NewFrozen(time.Unix(1700000000, 0)))
+		clock.NewFrozen(time.Unix(1700000000, 0)))
 }
 
 func historyOf(texts ...string) []port.HistoryMessage {

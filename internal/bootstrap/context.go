@@ -14,14 +14,14 @@ import (
 	"github.com/kissqianfu/aichat/internal/storage/db/repo"
 )
 
-// buildMemory 装配记忆族：抽取器、记忆引擎、情景/关系摘要、巩固排期与回复缓存。
+// buildMemory 装配记忆族：抽取器、记忆引擎、情景/关系摘要与巩固排期。
 func (w *wiring) buildMemory(ctx context.Context) {
 	var extractor orchestrator.MemoryExtractor
 	memExtractor := (*memory.Extractor)(nil)
 	if w.cfg.Features["memory_extract"] {
 		memExtractor = memory.NewExtractor(func(ctx context.Context) (port.ChatModel, error) {
 			return w.reg.ChatModel(ctx, "chat.fast")
-		}, w.logger)
+		})
 	}
 	memEngine := memory.NewEngine(memExtractor, w.memoryRepo, w.logger, w.clk)
 	// 记忆向量化（models.embed 槽位）：配了才回填向量 + 召回走向量精排；
@@ -47,7 +47,7 @@ func (w *wiring) buildMemory(ctx context.Context) {
 	// 关系摘要（R4-3）：每 N 条群消息用 fast 槽位更新"对这个人的印象"。
 	w.relEngine = memory.NewRelationshipEngine(repo.NewRelationshipRepo(w.store, w.clk), func(ctx context.Context) (port.ChatModel, error) {
 		return w.reg.ChatModel(ctx, "chat.fast")
-	}, w.logger, w.clk)
+	}, w.clk)
 	// 群成员与互动统计（docs/01 §2.6）：异步写链 4 表，私聊不进。
 	w.statsObs = stats.NewObserver(memberStatsStore{inner: repo.NewMemberRepo(w.store, w.clk)}, w.clk, w.logger)
 	w.startConsolidation(ctx)

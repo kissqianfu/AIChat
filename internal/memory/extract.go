@@ -4,7 +4,6 @@ package memory
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/kissqianfu/aichat/internal/platform/redact"
@@ -24,16 +23,12 @@ type Fact struct {
 
 // Extractor 用 fast 槽位模型抽取记忆。
 type Extractor struct {
-	model  func(ctx context.Context) (port.ChatModel, error)
-	logger *slog.Logger
+	model func(ctx context.Context) (port.ChatModel, error)
 }
 
 // NewExtractor 构造抽取器；model 每次调用时取（支持热切换/key 轮换）。
-func NewExtractor(model func(ctx context.Context) (port.ChatModel, error), logger *slog.Logger) *Extractor {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &Extractor{model: model, logger: logger}
+func NewExtractor(model func(ctx context.Context) (port.ChatModel, error)) *Extractor {
+	return &Extractor{model: model}
 }
 
 const extractPrompt = `你是记忆抽取器。从用户这句话里抽取值得长期记住的信息（事实/偏好/事件）。

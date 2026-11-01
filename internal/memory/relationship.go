@@ -3,7 +3,6 @@ package memory
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/kissqianfu/aichat/internal/platform/clock"
@@ -31,19 +30,15 @@ type RelationshipEngine struct {
 	store RelationshipStore
 	model func(ctx context.Context) (port.ChatModel, error)
 	clk   clock.Clock
-	log   *slog.Logger
 }
 
 // NewRelationshipEngine 构造关系摘要引擎。
 func NewRelationshipEngine(store RelationshipStore, model func(ctx context.Context) (port.ChatModel, error),
-	logger *slog.Logger, clk clock.Clock) *RelationshipEngine {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	clk clock.Clock) *RelationshipEngine {
 	if clk == nil {
 		clk = clock.System()
 	}
-	return &RelationshipEngine{store: store, model: model, clk: clk, log: logger}
+	return &RelationshipEngine{store: store, model: model, clk: clk}
 }
 
 // Summary 返回已存储的关系印象（无则空串）。
