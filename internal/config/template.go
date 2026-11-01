@@ -87,9 +87,7 @@ imagegen:
   enabled: false                   # 默认关
   max_per_day: 10                  # 每人/每群每天上限
 
-# 账户余额：只读展示「还剩多少」，以及余额曲线下降的斜率＝真实消耗速度。
-# 它不维护单价表，所以不会算错；对账看它，估算看 aichat_billing_amount_total。
-# 一家一个账户：DeepSeek 是人民币，Breeze 是积分，单位不同，看板分行、不能相加。
+# 账户余额
 balance:
   enabled: true                    # 关掉就不发这些请求
   interval_minutes: 10             # 每 N 分钟查一次（下限 1）
@@ -101,41 +99,32 @@ balance:
     #   base_url: https://api.breeze.blue/v1
     #   api_key_name: breezeblue
 
-
-# 模型槽位：每个引用自带 protocol / model / api_key_name（→ api_key 表）。
-#   protocol 决定「用谁家的接口」，连哪个地址也由它决定——端点写在各家自己的
-#   模块里（internal/llm/<vendor>），所以配置里**不需要 base_url**；只有走代理
-#   或自建网关时才在槽位里覆盖它。
-#     对话/视觉  deepseek（默认）| openai | qianwen
-#     asr        openai（默认）| qianwen
-#     tts        elevenlabs（默认）| breeze
-#     imagegen   openai（默认，/images/generations）| qianwen（百炼原生接口）
-#     search     deepseek
-#   **关掉某个能力 = 不写这个槽位**（整段删掉或注释掉），不是把 base_url 写空。
-#   只有模型名不校验——写错的 model 要到调用时才暴露。
 models:
   chat:
-    # 日常闲聊，默认槽位（必填）。protocol 省略 = deepseek。
+    # 日常闲聊，protocol:deepseek（默认）| openai | qianwen
     fast:
       primary: { protocol: deepseek, model: deepseek-flash, api_key_name: deepseek }
-    # 复杂推理/长文；缺失时回落 fast
+    
+    # 复杂推理/长文，protocol:deepseek（默认）| openai | qianwen
     strong:
       primary: { protocol: deepseek, model: deepseek-v4-pro, api_key_name: deepseek }
-  # 图像理解：不用时整段删除
+  
+  # 图像理解，protocol:deepseek（默认）| openai | qianwen
   vision:
     primary: { protocol: deepseek, model: deepseek-flash, api_key_name: deepseek }
-  # 语音识别：不用时不写这段（写了就要有 model 和存在的 key）。启用示例：
+  # 语音识别，protocol: openai（默认）| qianwen
   #   asr:
   #     primary: { protocol: qianwen, model: qwen3-asr-flash, api_key_name: qianwen }
-  # 语音合成：elevenlabs（pcm→silk）| breeze（mp3 直传，免 silk 编码器）
+  
+  # 语音合成，protocol: elevenlabs（默认）| breeze
   tts:
     primary: { protocol: breeze, model: breeze-tts-2, voice: voc_p36dbdewwvae, api_key_name: breezeblue }
-  # 图像生成：还需上面 imagegen.enabled 打开。protocol 决定接口形态——
-  #   qianwen：model 写 qwen-image-2.0（不是 Qwen-Image-3.0 之类），出图默认 1024*1024
-  #   openai ：model 写 dall-e-3 / gpt-image-1
-  # size 用 1024x1024 写法即可，千问侧会自动换成 1024*1024。
+  
+  # 图像生成，protocol: openai（默认）| qianwen（百炼原生接口）
+  # 还需上面 imagegen.enabled 打开。protocol 决定接口形态——
   imagegen:
     primary: { protocol: openai, model: dall-e-3, size: 1024x1024, api_key_name: openai }
+  
   # 联网搜索/抓取：deepseek（默认端点 api.deepseek.com）
   search:
     primary: { protocol: deepseek, api_key_name: deepseek }
