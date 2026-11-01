@@ -69,7 +69,7 @@ func (e *EpisodeEngine) Summarize(ctx context.Context, ev port.Event, recent []p
 		Emotion string `json:"emotion"`
 	}
 	// 调用/截断/非 JSON 由 chatJSON 自动重试一次，两次都失败才告警。
-	if err := chatJSON(ctx, e.log, model, episodePrompt, e.transcript(recent), &out); err != nil {
+	if err := chatJSON(ctx, model, episodePrompt, e.transcript(recent), &out); err != nil {
 		return err
 	}
 	summary := truncateRunes(strings.TrimSpace(out.Summary), episodeMaxSummaryRunes)

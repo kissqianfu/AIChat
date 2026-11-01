@@ -1,11 +1,8 @@
 package memory
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
@@ -188,12 +185,9 @@ func TestEpisodeSummarizeRetry(t *testing.T) {
 	store := &fakeEpisodeStore{}
 	good := `{"summary":"重试后成功","emotion":"joy"}`
 	model := &flakyModel{bad: "模型抽风了，给不了 JSON", good: good, failTimes: 1}
-	// 日志捕获：验证失败与重试留痕。
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	engine := NewEpisodeEngine(store, func(context.Context) (port.ChatModel, error) {
 		return model, nil
-	}, logger, clock.NewFrozen(time.Unix(1700000000, 0)))
+	}, nil, clock.NewFrozen(time.Unix(1700000000, 0)))
 	if err := engine.Summarize(context.Background(), episodeTestEvent(), episodeMessages()); err != nil {
 		t.Fatalf("第一次坏输出后应重试成功: %v", err)
 	}
@@ -202,14 +196,6 @@ func TestEpisodeSummarizeRetry(t *testing.T) {
 	}
 	if len(store.inserted) != 1 || store.inserted[0].Summary != "重试后成功" {
 		t.Fatalf("inserted = %+v", store.inserted)
-	}
-	// 排障日志：非 JSON 样本 + 重试留痕都要出现。
-	logs := buf.String()
-	if !strings.Contains(logs, "输出不是 JSON") || !strings.Contains(logs, "模型抽风了") {
-		t.Fatalf("失败样本日志缺失: %s", logs)
-	}
-	if !strings.Contains(logs, "重试后成功") {
-		t.Fatalf("重试留痕日志缺失: %s", logs)
 	}
 	// 两次都坏：报最后一次的错误，不落库。
 	store2 := &fakeEpisodeStore{}

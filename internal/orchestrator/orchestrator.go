@@ -294,7 +294,6 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	if o.cfg.ToolContext != nil {
 		toolCtx = o.cfg.ToolContext(ctx, ev)
 	}
-	started := o.clock.Now()
 	// 私聊流式（docs/01 §2.8）：条件满足时把本次模型调用包成流式装饰器，
 	// 增量直送平台；resp.Streamed=true 时跳过渲染与出站。
 	takeSeq := func() (int, bool) { return o.cfg.Budget.Take(ev.Scene, ev.MsgID) }
@@ -316,10 +315,8 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator: 模型调用: %w", err)
 	}
-	// 模型调用打点已上移 registry 装饰器（按槽位记次数/耗时/token，2026-11-01）。
-	if elapsed := o.clock.Now().Sub(started); elapsed > 3*time.Second {
-		o.cfg.Logger.Warn("慢模型请求", "event_id", ev.ID, "elapsed_ms", elapsed.Milliseconds())
-	}
+	// 模型调用打点已上移 registry 装饰器（按槽位记次数/耗时/token，2026-11-01），
+	// 这里不再打慢请求 WARN——正常 LLM 延迟常超 3s，纯噪音。
 	if o.cfg.CallLog != nil {
 		o.cfg.CallLog(ctx, ev, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.FinishReason)
 	}
