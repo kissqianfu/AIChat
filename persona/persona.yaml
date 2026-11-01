@@ -1,4 +1,4 @@
-version: "2026.11.01-1"    # 改内容就改它；/status 会显示
+version: "2026.11.01-2"    # 改内容就改它；/status 会显示
 baseline:                  # 七情基线，情绪衰减回落到这里
   joy: 0.35
   anger: 0.05
