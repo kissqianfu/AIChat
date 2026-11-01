@@ -302,11 +302,15 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 	// 私聊流式（docs/01 §2.8）：条件满足时把本次模型调用包成流式装饰器，
 	// 增量直送平台；resp.Streamed=true 时跳过渲染与出站。
 	takeSeq := func() (int, bool) { return o.cfg.Budget.Take(ev.Scene, ev.MsgID) }
-	// audioSent 记录本轮语音是否已经发出：语音一旦送达，后面的正文就不该再露面
-	// （见下方"语音即交付"）。流式装饰器也要据此闭麦，否则字会先流到用户眼前。
+	// 媒体交付即完成（2026-11-01，唯一判据）：工具把语音/图塞进 outbound 之后，
+	// 这一轮的正文就没有存在价值了——语音里话已说完，再打一行字，用户看到的就是
+	// "先来一句废话、几秒后才有语音"，像在播操作步骤。
+	//
+	// 软约束（人设"别复述"、工具回执"别说明"）压不住模型的收尾冲动（线上实测它
+	// 会补一句「想聊点什么？」），所以在这里硬兜底：语音一经确认发出，正文整段丢弃，
+	// 只保留落库占位（见 recordedReply）。图/表情包不受影响，仍可配一句话。
 	var audioSent atomic.Bool
-	muteText := func() bool { return audioSent.Load() }
-	if streamModel := newStreamTee(model, o.cfg.Streamer, ev, policy.Caps.MaxReplyRunes, takeSeq, muteText); streamModel != model {
+	if streamModel := newStreamTee(model, o.cfg.Streamer, ev, policy.Caps.MaxReplyRunes, takeSeq, audioSent.Load); streamModel != model {
 		model = streamModel
 	}
 	resp, mediaBlocks, err := o.chatWithTools(toolCtx, model, port.ChatRequest{
@@ -324,14 +328,8 @@ func (o *Orchestrator) generateReply(ctx context.Context, ev port.Event, userTex
 		o.cfg.CallLog(ctx, ev, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.FinishReason)
 	}
 	content := strings.TrimSpace(resp.Content)
-	// 语音即交付（2026-11-01）：本轮既然调了 send_voice，就只发语音。
-	//
-	// 工具返回后模型还会再吐一句正文（线上实测：「想聊点什么？」），用户于是先
-	// 看到一句打字、几秒后才看到语音——他以为自己看到了"调用工具的过程"。人设里
-	// 写"别复述、别再补充"属于软约束，压不住模型的收尾冲动，这里硬兜底：
-	// 语音里话已说完，正文只当内部记录，不发出去。
 	if audioSent.Load() {
-		content = ""
+		content = "" // 见上：语音已发出，正文按内部记录处理，不发
 	}
 	// 纯媒体回复是合法的：模型只调了 send_voice / sticker_pick / image_gen 而没说话。
 	// 文本与媒体都空才是真异常（否则"别预告动作"的引导会让整条语音一起被丢）。

@@ -106,7 +106,7 @@ func (t *ImageGenTool) Invoke(ctx context.Context, args json.RawMessage) (port.T
 	}
 	t.log.Info("图像已生成", "bytes", len(data), "mime", mime)
 	return port.ToolResult{
-		Content: "图已随这条回复发出。不要复述、不要说明你画了什么，也不要说用了什么模型。",
+		Content: "图已随这条回复发出。不用说明画了什么、用了什么模型；别的照常聊。",
 		Blocks:  []port.Block{port.ImageBlock{Data: data, MIME: mime}},
 	}, nil
 }

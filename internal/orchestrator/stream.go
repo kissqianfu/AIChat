@@ -28,8 +28,7 @@ type streamTee struct {
 	maxRunes int                // 档位长度上限（提前截断收流）
 	takeSeq  func() (int, bool) // 被动额度取号（成功 Start 后消息即已发出）
 	mute     func() bool        // 返回 true 表示正文已无需再发（如语音已送达）
-
-	disabled bool // 流式不可用：后续全部直通
+	disabled bool               // 流式不可用：后续全部直通
 }
 
 // newStreamTee 构造流式装饰器；条件不满足（非私聊/无锚点/无 streamer）返回原模型。

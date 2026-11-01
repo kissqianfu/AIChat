@@ -42,9 +42,9 @@ func (t *VoiceTool) Name() string { return "send_voice" }
 func (t *VoiceTool) Spec() port.ToolSpec {
 	return port.ToolSpec{
 		Name:        "send_voice",
-		Description: "把一段话合成语音发出去（≤200 字，适合短句回复）",
+		Description: "把一段话合成语音发出去（≤200 字，适合短句回复）。text 只写要对对方说的原话，不要写你的想法、计划或对规则的自言自语",
 		Schema: json.RawMessage(`{"type":"object","properties":{
-			"text":{"type":"string","description":"要合成的文本，≤200 字"}
+			"text":{"type":"string","description":"要念出来的台词，≤200 字，像面对面说话那样"}
 		},"required":["text"]}`),
 		Timeout:   45 * time.Second,
 		MaxResult: 100,
@@ -84,10 +84,10 @@ func (t *VoiceTool) Invoke(ctx context.Context, args json.RawMessage) (port.Tool
 		mime = "audio/silk"
 	}
 	return port.ToolResult{
-		// 媒体结果由编排层单独发出，模型这一轮只需要"知道发出了"。
-		// 文案里明说不必复述，否则模型经常补一句"语音发给你啦"，
-		// 用户就收到"文字 + 语音"两条，像在念操作步骤。
-		Content: "语音已直接发到对话里。不要复述、不要说明你发了语音，也不用问听没听到；有别的要说的就正常接着说。",
+		// 媒体结果由编排层单独发出，这一轮模型只需要"知道发出了"。回执必须和
+		// 编排层的硬规则一致：语音发出即本轮结束，编排层会把后续正文整段丢弃，
+		// 所以这里绝不能再写"还有话就接着说"——那是在让模型白说一遍。
+		Content: "语音已发出，这次回复就到此结束：不要再打字补充，也不用问听没听到。",
 		Blocks:  []port.Block{port.AudioBlock{Data: silk, MIME: mime, FileName: voiceFileName(mime)}},
 	}, nil
 }
