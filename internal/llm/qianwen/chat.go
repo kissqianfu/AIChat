@@ -33,10 +33,11 @@ import (
 )
 
 const (
-	// DefaultBaseURL 是北京地域的兼容模式端点。
-	// 百炼现在推荐业务空间专属域名 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com
-	// （性能更好），那个从配置里填 base_url 覆盖即可；裸域名仍然可用。
-	DefaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+	// DefaultBaseURL 是千问 AI 平台（MaaS 网关）的兼容模式端点。
+	// 旧百炼裸域名 dashscope.aliyuncs.com 与北京业务空间专属域名
+	// https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com 仍可用，路径相同，
+	// 从配置里填 base_url 覆盖即可（2026-11-02 实测：现有百炼 key 直接通用）。
+	DefaultBaseURL = "https://maas.qianwenaiapi.com/compatible-mode/v1"
 	// DefaultModel 是缺省模型。qwen-plus 属混合思考、默认不思考，
 	// 作为兜底比默认开启思考的 qwen3.x-max 更省钱也更可控。
 	DefaultModel = "qwen-plus"

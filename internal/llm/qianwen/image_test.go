@@ -116,7 +116,7 @@ func TestImageGenNoImage(t *testing.T) {
 func TestImageEndpoint(t *testing.T) {
 	const native = "/api/v1/services/aigc/multimodal-generation/generation"
 	cases := []struct{ base, want string }{
-		{"", "https://dashscope.aliyuncs.com" + native},
+		{"", "https://maas.qianwenaiapi.com" + native},
 		{"https://dashscope.aliyuncs.com", "https://dashscope.aliyuncs.com" + native},
 		{"https://dashscope.aliyuncs.com/", "https://dashscope.aliyuncs.com" + native},
 		// 照抄对话槽位那一行（兼容模式）——最常见，必须能接住

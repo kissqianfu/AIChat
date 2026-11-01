@@ -1,6 +1,6 @@
 // tts.go：千问语音合成。
 //
-// 走百炼原生非实时合成端点（POST {root}/services/audio/tts/SpeechSynthesizer，
+// 走千问非实时合成端点（POST {root}/services/audio/tts/SpeechSynthesizer，
 // qwen-audio-tts / cosyvoice 系列），与对话/转写的兼容模式同 key 不同门——
 // 所以单独一个文件、单独一条登记（默认端点跟着登记走）。
 //
@@ -26,10 +26,11 @@ import (
 )
 
 const (
-	// DefaultTTSBaseURL 是百炼非实时合成的 API 根（地域根域名 + /api/v1）。
-	// 北京地域的业务空间专属域名（{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1）
-	// 用 base_url 覆盖即可，路径不变。
-	DefaultTTSBaseURL = "https://dashscope.aliyuncs.com/api/v1"
+	// DefaultTTSBaseURL 是千问 AI 平台（MaaS 网关）非实时合成的 API 根
+	// （根域名 + /api/v1）。北京业务空间专属域名
+	// （{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1）路径相同，
+	// 用 base_url 覆盖即可（2026-11-02 实测：qwen-audio-3.0-tts-flash 出音频正常）。
+	DefaultTTSBaseURL = "https://maas.qianwenaiapi.com/api/v1"
 	// ttsEndpointPath 是合成接口在 API 根之后的路径。
 	ttsEndpointPath = "/services/audio/tts/SpeechSynthesizer"
 	// ttsTimeout 是单次合成的整体超时（含音频下载）。

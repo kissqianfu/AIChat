@@ -18,7 +18,7 @@ func TestChatDefaultBaseURL(t *testing.T) {
 	cases := map[string]string{
 		protocol.DeepSeek:   "https://api.deepseek.com",
 		protocol.OpenAI:     "https://api.openai.com/v1",
-		protocol.Qianwen:    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		protocol.Qianwen:    "https://maas.qianwenaiapi.com/compatible-mode/v1",
 		"":                  "https://api.deepseek.com", // 空 = 默认协议（deepseek）
 		protocol.ElevenLabs: "",                         // 不是对话协议
 		"some-vendor":       "",

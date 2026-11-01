@@ -111,12 +111,12 @@ models:
   #     primary: { protocol: openai, model: text-embedding-3-small, api_key_name: openai }
   
   # 语音合成，protocol: elevenlabs（默认）| breeze | qianwen
-  #   qianwen 走百炼原生合成（qwen-audio-tts/cosyvoice 系列，mp3 直传），
+  #   qianwen 走非实时合成（qwen-audio-tts/cosyvoice 系列，mp3 直传），
   #   与 chat 共用 qianwen 密钥；北京地域专属域名用 base_url 覆盖
   #   tts:
-  #     primary: { protocol: qianwen, model: qwen-audio-3.1-tts-flash, voice: longanhuan_v3.1, api_key_name: qianwen }
+  #     primary: { protocol: qianwen, model: qwen-audio-3.0-tts-flash, voice: longanhuan_v3.6, api_key_name: qianwen }
   tts:
-    primary: { protocol: breeze, model: breeze-tts-2, voice: voc_p36dbdewwvae, api_key_name: breezeblue }
+    primary: { protocol: qianwen, model: qwen-audio-3.0-tts-flash, voice: longanhuan_v3.6, api_key_name: qianwen }
   
   # 图像生成，protocol: openai（默认）| qianwen（百炼原生接口）
   # 还需上面 imagegen.enabled 打开。protocol 决定接口形态——

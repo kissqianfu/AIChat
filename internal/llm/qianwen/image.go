@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	// DefaultImageBaseURL 是百炼原生接口的根（注意：不带 /compatible-mode/v1）。
-	DefaultImageBaseURL = "https://dashscope.aliyuncs.com"
+	// DefaultImageBaseURL 是千问 AI 平台（MaaS 网关）的根域名
+	// （原生接口，注意不带 /compatible-mode/v1）。
+	DefaultImageBaseURL = "https://maas.qianwenaiapi.com"
 	// DefaultImageModel 是缺省文生图模型。qwen-image-2.0 是加速版，
 	// pro 版更贵且只在文字渲染上更好，闲聊画图用不上。
 	DefaultImageModel = "qwen-image-2.0"
