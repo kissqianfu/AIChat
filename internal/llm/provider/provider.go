@@ -41,6 +41,8 @@ const (
 	CapASR Capability = "asr"
 	// CapTTS 是文本转语音。
 	CapTTS Capability = "tts"
+	// CapEmbed 是文本向量化（记忆回填与召回）。
+	CapEmbed Capability = "embed"
 )
 
 // String 实现 fmt.Stringer（报错与日志里直接用）。
@@ -60,6 +62,8 @@ func CapabilityOf(slot string) Capability {
 		return CapTTS
 	case slot == "imagegen":
 		return CapImage
+	case slot == "embed":
+		return CapEmbed
 	default:
 		return ""
 	}

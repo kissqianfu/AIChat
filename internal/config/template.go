@@ -100,13 +100,15 @@ models:
   # 图像理解，protocol:deepseek（默认）| openai | qianwen
   vision:
     primary: { protocol: deepseek, model: deepseek-flash, api_key_name: deepseek }
+  
   # 语音识别，protocol: openai（默认）| qianwen
   #   asr:
   #     primary: { protocol: qianwen, model: qwen3-asr-flash, api_key_name: qianwen }
 
   # 记忆向量化（OpenAI 兼容 /embeddings）：不写 = 关闭（检索走词面路径）
+  #   地址归 protocol（openai 默认 api.openai.com/v1）；第三方兼容端点写 base_url 覆盖
   #   embed:
-  #     primary: { protocol: openai, base_url: https://api.siliconflow.cn/v1, model: BAAI/bge-m3, api_key_name: siliconflow }
+  #     primary: { protocol: openai, model: text-embedding-3-small, api_key_name: openai }
   
   # 语音合成，protocol: elevenlabs（默认）| breeze
   tts:

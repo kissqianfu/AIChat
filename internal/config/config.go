@@ -128,7 +128,8 @@ type ModelsConfig struct {
 	Search *ModelSlot `yaml:"search"`
 	// Embed 是记忆向量化的向量化端点槽位（OpenAI 兼容 /embeddings）。
 	// 不写这个槽位 = 向量化关闭：记忆检索走 bigram 粗筛 + 词面精排（离线路径）。
-	// 写了才启用：记忆回填向量 + 召回改用余弦精排。
+	// 写了才启用：记忆回填向量 + 召回改用余弦精排。地址归 protocol（openai
+	// 默认 api.openai.com/v1），第三方兼容端点写 base_url 覆盖。
 	Embed *ModelSlot `yaml:"embed"`
 }
 

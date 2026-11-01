@@ -1,6 +1,6 @@
 // dispatch.go：跨能力的小工具——配置校验与启动自检用。
 //
-// 这里的 switch 分的是**能力**（四个，固定），不是厂商：加了新厂商不需要动它，
+// 这里的 switch 分的是**能力**（五个，固定），不是厂商：加了新厂商不需要动它，
 // 加了新能力才需要（那时也确实该在这里多一条）。
 package provider
 
@@ -20,6 +20,8 @@ func Registered(capability Capability) []string {
 		return asrRegistry.names()
 	case CapTTS:
 		return ttsRegistry.names()
+	case CapEmbed:
+		return embedRegistry.names()
 	default:
 		return nil
 	}
@@ -39,6 +41,8 @@ func Supports(capability Capability, proto string) bool {
 		return asrRegistry.supports(proto)
 	case CapTTS:
 		return ttsRegistry.supports(proto)
+	case CapEmbed:
+		return embedRegistry.supports(proto)
 	default:
 		return false
 	}
@@ -55,6 +59,8 @@ func DefaultBaseURL(capability Capability, proto string) string {
 		return asrRegistry.defaultBaseURL(proto)
 	case CapTTS:
 		return ttsRegistry.defaultBaseURL(proto)
+	case CapEmbed:
+		return embedRegistry.defaultBaseURL(proto)
 	default:
 		return ""
 	}
@@ -62,7 +68,7 @@ func DefaultBaseURL(capability Capability, proto string) string {
 
 // Summary 返回「能力=协议/协议」的一行摘要，用于启动日志与自检输出。
 func Summary() string {
-	caps := []Capability{CapChat, CapImage, CapASR, CapTTS}
+	caps := []Capability{CapChat, CapImage, CapASR, CapTTS, CapEmbed}
 	parts := make([]string, 0, len(caps))
 	for _, capability := range caps {
 		names := Registered(capability)

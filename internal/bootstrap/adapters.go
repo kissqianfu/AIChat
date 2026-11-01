@@ -10,7 +10,6 @@ import (
 
 	"github.com/kissqianfu/aichat/internal/admin"
 	"github.com/kissqianfu/aichat/internal/limits"
-	"github.com/kissqianfu/aichat/internal/llm/openai"
 	"github.com/kissqianfu/aichat/internal/llm/protocol"
 	"github.com/kissqianfu/aichat/internal/llm/provider"
 	"github.com/kissqianfu/aichat/internal/llm/registry"
@@ -87,20 +86,19 @@ type auditWriter interface {
 	Audit(ctx context.Context, actor, action, detail string) error
 }
 
-// memoryEmbedder 把 OpenAI 兼容 /embeddings 接成 port.Embedder（记忆向量回填用）。
+// memoryEmbedder 把 port.Embedder 接成 orchestrator 需要的「批量 + 单条」双入口。
 type memoryEmbedder struct {
-	client *openai.Client
-	model  string
+	impl port.Embedder
 }
 
-// Embed 实现 port.Embedder（批量）。
+// Embed 实现 port.Embedder（批量，记忆回填用）。
 func (a *memoryEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	return a.client.Embed(ctx, a.model, texts)
+	return a.impl.Embed(ctx, texts)
 }
 
 // EmbedOne 单条文本向量化（召回 query 用）。
 func (a *memoryEmbedder) EmbedOne(ctx context.Context, text string) ([]float32, error) {
-	vecs, err := a.Embed(ctx, []string{text})
+	vecs, err := a.impl.Embed(ctx, []string{text})
 	if err != nil {
 		return nil, err
 	}
@@ -110,8 +108,9 @@ func (a *memoryEmbedder) EmbedOne(ctx context.Context, text string) ([]float32, 
 	return vecs[0], nil
 }
 
-// embedFor 按 models.embed 槽位构造记忆向量化客户端：槽位缺失 = 向量化关闭（返回 nil, nil）。
-// 只支持 OpenAI 兼容协议（embed 目前只有这一家实现），配置了别的协议按配置错误告警。
+// embedFor 按 models.embed 槽位构造记忆向量化实现：槽位缺失 = 向量化关闭（返回 nil, nil）。
+// 协议与端点都归 provider 注册表管（2026-11-02 起与 asr/tts 同构）：
+// protocol 缺省 openai，base_url 缺省该协议登记的默认端点，第三方兼容端点写 base_url 覆盖。
 func embedFor(reg *registry.Registry, keys keyGetter, logger *slog.Logger) (*memoryEmbedder, error) {
 	if reg == nil || keys == nil {
 		return nil, errors.New("registry 或密钥仓库为空")
@@ -121,18 +120,17 @@ func embedFor(reg *registry.Registry, keys keyGetter, logger *slog.Logger) (*mem
 		logger.Info("记忆向量化未启用", "reason", "config.yaml 没有 embed 槽位（检索走词面路径）")
 		return nil, nil
 	}
-	if proto := protocol.Normalize(ref.Protocol); proto != "" && proto != protocol.OpenAI {
-		return nil, fmt.Errorf("models.embed 协议 %q 不支持（只支持 openai 兼容端点）", ref.Protocol)
-	}
-	client := openai.New(openai.Config{
-		BaseURL: ref.BaseURL,
-		APIKey:  func(ctx context.Context) (string, error) { return keys.Key(ctx, ref.APIKeyName) },
+	impl, err := provider.NewEmbedder(provider.EmbedParams{
+		Protocol: ref.Protocol,
+		BaseURL:  ref.BaseURL,
+		Model:    ref.Model,
+		APIKey:   func(ctx context.Context) (string, error) { return keys.Key(ctx, ref.APIKeyName) },
 	})
-	if client == nil {
-		return nil, errors.New("models.embed 缺 base_url")
+	if err != nil {
+		return nil, err
 	}
 	logger.Info("记忆向量化已启用", "model", ref.Model, "base_url", ref.BaseURL)
-	return &memoryEmbedder{client: client, model: ref.Model}, nil
+	return &memoryEmbedder{impl: impl}, nil
 }
 
 // imageGenFnFor 按 models.imagegen 槽位构造画图闭包：protocol 决定用谁家。

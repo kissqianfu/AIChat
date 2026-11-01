@@ -46,4 +46,12 @@ func init() {
 		}
 		return &transcriber{client: client, model: p.Model, filename: filename}, nil
 	})
+
+	provider.RegisterEmbed(protocol.OpenAI, DefaultEmbedBaseURL, func(p provider.EmbedParams) (port.Embedder, error) {
+		client := New(Config{BaseURL: p.BaseURL, APIKey: p.APIKey, HTTP: p.HTTP})
+		if client == nil {
+			return nil, errors.New("openai: 向量化端点为空")
+		}
+		return &embedder{client: client, model: p.Model}, nil
+	})
 }
