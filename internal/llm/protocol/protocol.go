@@ -33,7 +33,7 @@ func Normalize(p string) string { return strings.ToLower(strings.TrimSpace(p)) }
 // 历史默认，保持老配置不改也能跑。
 func DefaultFor(slot string) string {
 	switch {
-	case slot == "asr", slot == "imagegen":
+	case slot == "asr", slot == "imagegen", slot == "embed":
 		return OpenAI
 	case slot == "tts":
 		return ElevenLabs

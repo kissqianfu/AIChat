@@ -83,7 +83,7 @@ func (w *wiring) watchModels(ctx context.Context) {
 }
 
 // openAIProvider 已随 providers 段删除（2026-10-31）：
-// OpenAI 兼容客户端改按能力槽位各自构造，见 adapters.go 的 openAIForSlot。
+// OpenAI 兼容客户端改按能力槽位各自构造，见 adapters.go 的 embedFor 等槽位装配函数。
 
 // buildPersona 加载人设（失败拒绝启动）并按需启动目录 watch（docs/08 §5）。
 

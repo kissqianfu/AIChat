@@ -126,6 +126,10 @@ type ModelsConfig struct {
 	// Search 是 web_search 工具的端点槽位（2026-10-31）：无需 model 名；
 	// base_url 空 = 默认 api.deepseek.com + 密钥 deepseek。
 	Search *ModelSlot `yaml:"search"`
+	// Embed 是记忆向量化的向量化端点槽位（OpenAI 兼容 /embeddings）。
+	// 不写这个槽位 = 向量化关闭：记忆检索走 bigram 粗筛 + 词面精排（离线路径）。
+	// 写了才启用：记忆回填向量 + 召回改用余弦精排。
+	Embed *ModelSlot `yaml:"embed"`
 }
 
 // ModelSlot 是一个用途槽位：主模型 + 回退链。

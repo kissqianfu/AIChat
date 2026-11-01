@@ -24,6 +24,16 @@ func (w *wiring) buildMemory(ctx context.Context) {
 		}, w.logger)
 	}
 	memEngine := memory.NewEngine(memExtractor, w.memoryRepo, w.logger, w.clk)
+	// 记忆向量化（models.embed 槽位）：配了才回填向量 + 召回走向量精排；
+	// 槽位缺失 = 词面路径（bigram 粗筛 + Jaccard 精排），与历史行为一致。
+	embedder, err := embedFor(w.reg, w.keyRepo, w.logger)
+	if err != nil {
+		w.logger.Warn("记忆向量化未启用", "err", err)
+	}
+	if embedder != nil {
+		memEngine = memEngine.WithEmbedder(embedder)
+		w.embedOne = queryEmbedder(embedder)
+	}
 	memEngine.StartReviewLoop(ctx, time.Hour)
 	if w.cfg.Features["memory_extract"] {
 		extractor = memEngine

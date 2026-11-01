@@ -122,6 +122,7 @@ func validateModels(m config.ModelsConfig) (map[string]Slot, error) {
 	for name, slot := range map[string]*Slot{
 		"vision": m.Vision, "asr": m.Asr,
 		"tts": m.TTS, "imagegen": m.ImageGen, "search": m.Search,
+		"embed": m.Embed,
 	} {
 		if slot != nil {
 			slots[name] = *slot

@@ -51,16 +51,19 @@ type Config struct {
 	PersonaProvider func() string
 	// Builder 组装模型输入与落库（prompt.Builder）；nil 时 New 按
 	// Persona/PersonaProvider/History/Recorder/Logger 自动构造一个。
-	Builder           *prompt.Builder
-	Logger            *slog.Logger
-	History           port.History   // nil = 不装配历史（单轮）
-	Recorder          port.Recorder  // nil = 不落库
-	Budget            *budget.Budget // nil = 不分段/不限额（测试或降级）
-	Renderer          port.Renderer  // nil = 纯文本 + 语义切分
-	Capability        port.Capability
-	Gate              *gate.Gate                                                        // nil = 默认（单聊+群 @）
-	Toolbox           Toolbox                                                           // nil = 不启用工具
-	Memory            port.Memory                                                       // nil = 不读写记忆
+	Builder    *prompt.Builder
+	Logger     *slog.Logger
+	History    port.History   // nil = 不装配历史（单轮）
+	Recorder   port.Recorder  // nil = 不落库
+	Budget     *budget.Budget // nil = 不分段/不限额（测试或降级）
+	Renderer   port.Renderer  // nil = 纯文本 + 语义切分
+	Capability port.Capability
+	Gate       *gate.Gate  // nil = 默认（单聊+群 @）
+	Toolbox    Toolbox     // nil = 不启用工具
+	Memory     port.Memory // nil = 不读写记忆
+	// Embed 是单条文本向量化闭包（models.embed 槽位）：非 nil 时召回 query 预计算
+	// 向量，精排的相似度改用余弦；nil = 词面路径（bigram 粗筛 + Jaccard 精排）。
+	Embed             func(ctx context.Context, text string) ([]float32, error)         // nil = 不走向量召回
 	Extractor         MemoryExtractor                                                   // nil = 不抽取记忆
 	Emotion           EmotionEngine                                                     // nil = 不更新情绪
 	Media             MediaDownloader                                                   // nil = 不下载附件

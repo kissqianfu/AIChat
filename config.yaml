@@ -118,6 +118,11 @@ models:
   search:
     primary: { protocol: deepseek, api_key_name: deepseek }
 
+  # 记忆向量化（OpenAI 兼容 /embeddings）：不写这个槽位 = 关闭（检索走词面路径）。
+  # 写了才启用：记忆自动回填向量 + 召回改用余弦精排。需要支持 embeddings 的端点。
+  # embed:
+  #   primary: { protocol: openai, base_url: https://api.siliconflow.cn/v1, model: BAAI/bge-m3, api_key_name: siliconflow }
+
 
 # 配置级灰度开关（M4-6）：改这里 + 重启即可关掉某能力
 features:

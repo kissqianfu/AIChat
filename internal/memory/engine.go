@@ -107,20 +107,24 @@ func truncateLog(s string) string {
 }
 
 // Store 是记忆引擎需要的存储能力（repo.MemoryRepo 实现）。
-//
-// 2026-11-01 删除 embed 槽位：不再有向量回填（原 SetEmbedding /
-// PendingEmbeddings 已移除），检索走 bigram 粗筛 + 词面精排。
+// SetEmbedding/PendingEmbeddings 只有配置了 models.embed 槽位才会被调用。
 type Store interface {
 	RememberFact(ctx context.Context, item port.MemoryItem) (bool, error)
 	DueReviews(ctx context.Context, now time.Time, limit int) ([]port.MemoryItem, error)
 	ApplyReview(ctx context.Context, id int64, stability, importance float64, nextReview time.Time) error
 	Consolidate(ctx context.Context, now time.Time, rArchive, importanceArchive float64) (int, int, error)
+	SetEmbedding(ctx context.Context, id int64, vec []float32) error
+	PendingEmbeddings(ctx context.Context, limit int) ([]port.MemoryItem, error)
 }
+
+// embeddingBackfillBatch 是每轮复习顺带回填向量的记忆条数上限。
+const embeddingBackfillBatch = 32
 
 // Engine 负责"消息 → 抽取 → 落库"与"复习（衰减/巩固）"。
 type Engine struct {
 	extractor *Extractor
 	store     Store
+	embedder  port.Embedder // nil = 不回填向量（未配置 models.embed 槽位），检索走词面
 	log       *slog.Logger
 	clk       clock.Clock
 }
@@ -134,6 +138,12 @@ func NewEngine(extractor *Extractor, store Store, logger *slog.Logger, clk clock
 		clk = clock.System()
 	}
 	return &Engine{extractor: extractor, store: store, log: logger, clk: clk}
+}
+
+// WithEmbedder 注入向量化能力（nil = 不回填，检索走 bigram）；返回自身便于链式装配。
+func (e *Engine) WithEmbedder(embedder port.Embedder) *Engine {
+	e.embedder = embedder
+	return e
 }
 
 // Process 抽取一条消息里的记忆并落库（调用方应异步执行）。
@@ -199,7 +209,52 @@ func (e *Engine) ReviewOnce(ctx context.Context) (int, error) {
 	if processed > 0 {
 		e.log.Info("记忆复习完成", "processed", processed)
 	}
+	// 每轮复习顺带补向量：新抽取的记忆从这里获得 embedding（配了 embed 槽位时）。
+	if _, err := e.BackfillEmbeddings(ctx); err != nil {
+		e.log.Warn("记忆向量回填失败", "err", err)
+	}
 	return processed, nil
+}
+
+// BackfillEmbeddings 给还没有向量的记忆补 embedding（单轮最多 embeddingBackfillBatch 条）。
+// 返回本轮回填成功的条数；没有 embedder/存储时直接返回 0（检索自动回退词面路径）。
+func (e *Engine) BackfillEmbeddings(ctx context.Context) (int, error) {
+	if e.embedder == nil || e.store == nil {
+		return 0, nil
+	}
+	pending, err := e.store.PendingEmbeddings(ctx, embeddingBackfillBatch)
+	if err != nil {
+		return 0, err
+	}
+	if len(pending) == 0 {
+		return 0, nil
+	}
+	texts := make([]string, len(pending))
+	for i, item := range pending {
+		texts[i] = item.Content
+	}
+	vecs, err := e.embedder.Embed(ctx, texts)
+	if err != nil {
+		return 0, fmt.Errorf("memory: 回填向量: %w", err)
+	}
+	if len(vecs) != len(pending) {
+		return 0, fmt.Errorf("memory: 回填向量数量不匹配: got %d want %d", len(vecs), len(pending))
+	}
+	done := 0
+	for i, item := range pending {
+		if len(vecs[i]) == 0 {
+			continue
+		}
+		if err := e.store.SetEmbedding(ctx, item.ID, vecs[i]); err != nil {
+			e.log.Warn("记忆向量写回失败", "memory_id", item.ID, "err", err)
+			continue
+		}
+		done++
+	}
+	if done > 0 {
+		e.log.Info("记忆向量已回填", "count", done)
+	}
+	return done, nil
 }
 
 // reviewItem 按艾宾浩斯曲线复习一条记忆（S 增 1.5 倍、重要度按保持率衰减、排下次复习）。

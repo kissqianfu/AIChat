@@ -84,6 +84,9 @@ type fakeStore struct {
 	due        []port.MemoryItem
 	reviews    []reviewCall
 
+	embeddings    map[int64][]float32
+	pendingEmbeds []port.MemoryItem
+
 	consolidateCalls int
 	archived         int
 	purged           int
@@ -111,6 +114,23 @@ func (f *fakeStore) ApplyReview(_ context.Context, id int64, stability, importan
 func (f *fakeStore) Consolidate(context.Context, time.Time, float64, float64) (int, int, error) {
 	f.consolidateCalls++
 	return f.archived, f.purged, f.consolidateErr
+}
+
+func (f *fakeStore) SetEmbedding(_ context.Context, id int64, vec []float32) error {
+	if f.embeddings == nil {
+		f.embeddings = map[int64][]float32{}
+	}
+	f.embeddings[id] = vec
+	return nil
+}
+func (f *fakeStore) PendingEmbeddings(_ context.Context, limit int) ([]port.MemoryItem, error) {
+	if f.pendingEmbeds == nil {
+		return nil, nil
+	}
+	if len(f.pendingEmbeds) > limit {
+		f.pendingEmbeds = f.pendingEmbeds[:limit]
+	}
+	return f.pendingEmbeds, nil
 }
 
 func TestEngineProcess(t *testing.T) {
@@ -177,3 +197,43 @@ type frozenClock struct{ now time.Time }
 
 func (f frozenClock) Now() time.Time                  { return f.now }
 func (f frozenClock) Since(t time.Time) time.Duration { return f.now.Sub(t) }
+
+// fakeEmbedder 返回预设向量（回填测试用）。
+type fakeEmbedder struct {
+	vecs [][]float32
+	err  error
+}
+
+func (f *fakeEmbedder) Embed(context.Context, []string) ([][]float32, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.vecs, nil
+}
+
+func TestBackfillEmbeddings(t *testing.T) {
+	store := &fakeStore{pendingEmbeds: []port.MemoryItem{
+		{ID: 1, Content: "用户喜欢猫"},
+		{ID: 2, Content: "用户对猫毛过敏"},
+	}}
+	embedder := &fakeEmbedder{vecs: [][]float32{{1, 0}, {0, 1}}}
+	engine := NewEngine(nil, store, nil, nil).WithEmbedder(embedder)
+	done, err := engine.BackfillEmbeddings(context.Background())
+	if err != nil || done != 2 {
+		t.Fatalf("BackfillEmbeddings() = %d/%v", done, err)
+	}
+	if len(store.embeddings) != 2 || store.embeddings[1][0] != 1 || store.embeddings[2][1] != 1 {
+		t.Fatalf("embeddings = %+v", store.embeddings)
+	}
+}
+
+func TestBackfillEmbeddingsSkipped(t *testing.T) {
+	store := &fakeStore{pendingEmbeds: []port.MemoryItem{{ID: 1, Content: "x"}}}
+	engine := NewEngine(nil, store, nil, nil)
+	if done, err := engine.BackfillEmbeddings(context.Background()); done != 0 || err != nil {
+		t.Fatalf("BackfillEmbeddings(no embedder) = %d/%v", done, err)
+	}
+	if len(store.embeddings) != 0 {
+		t.Fatalf("embeddings = %+v", store.embeddings)
+	}
+}

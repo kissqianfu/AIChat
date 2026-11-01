@@ -140,6 +140,7 @@ type wiring struct {
 	emotionEngine *emotion.Engine
 	memEngine     *memory.Engine
 	memExtractor  orchestrator.MemoryExtractor
+	embedOne      func(ctx context.Context, text string) ([]float32, error) // nil = 向量化关闭（无 embed 槽位）
 	episodeEngine *memory.EpisodeEngine
 	relEngine     *memory.RelationshipEngine
 	statsObs      *stats.Observer // 群成员/互动统计（docs/01 §2.6），nil = 未初始化

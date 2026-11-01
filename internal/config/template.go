@@ -103,6 +103,10 @@ models:
   # 语音识别，protocol: openai（默认）| qianwen
   #   asr:
   #     primary: { protocol: qianwen, model: qwen3-asr-flash, api_key_name: qianwen }
+
+  # 记忆向量化（OpenAI 兼容 /embeddings）：不写 = 关闭（检索走词面路径）
+  #   embed:
+  #     primary: { protocol: openai, base_url: https://api.siliconflow.cn/v1, model: BAAI/bge-m3, api_key_name: siliconflow }
   
   # 语音合成，protocol: elevenlabs（默认）| breeze
   tts:

@@ -225,6 +225,7 @@ func (w *wiring) buildOrchestrator(ctx context.Context) (*orchestrator.Orchestra
 		Gate:              w.buildGate(),
 		Toolbox:           &loggingToolbox{inner: w.toolbox, repo: w.logsRepo},
 		Memory:            w.memoryRepo,
+		Embed:             w.embedOne,
 		Extractor:         w.memExtractor,
 		Episode:           w.episodeEngine,
 		EpisodeTurns:      w.cfg.Memory.EpisodeTurns,

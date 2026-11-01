@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
@@ -146,8 +147,8 @@ func (r *MemoryRepo) insert(ctx context.Context, e execer, item port.MemoryItem)
 	return nil
 }
 
-// Recall 召回：有 query 向量时按范围取最近候选做向量精排；否则 SQL bigram 粗筛 + Go 精排。
-// 两层结构固定（docs/02 §1.2）：SQL 只做粗筛，打分只有 scoreMemory 一份实现。
+// Recall 召回：两层结构固定（docs/02 §1.2）——SQL 只做粗筛，打分只有 scoreMemory
+// 一份实现。有 query 向量时按范围取候选做余弦精排；否则 bigram 粗筛 + 词面精排。
 func (r *MemoryRepo) Recall(ctx context.Context, q port.RecallQuery) ([]port.MemoryItem, error) {
 	topK := q.TopK
 	if topK <= 0 {
@@ -172,32 +173,32 @@ func (r *MemoryRepo) Recall(ctx context.Context, q port.RecallQuery) ([]port.Mem
 	return trimByBudget(mmrSelect(candidates, topK, mmrLambda), topK, tokenBudget), nil
 }
 
-// recallSQL 拼召回 SQL：bigram LIKE 粗筛（SQLite/PG 都没有 ANN 索引，
-// 本机数据量下 300 条暴力精排足够），再用 scoreMemory 词面精排。
-//
-// 2026-11-01 删除 embed 后不再有 query 向量，粗筛恒定走词面。
+// recallSQL 拼召回 SQL：有 query 向量时不按词面过滤（交给余弦精排召回），
+// 否则保持 bigram LIKE 粗筛（SQLite/PG 都没有 ANN 索引，本机数据量下 300 条暴力精排足够）。
 func recallSQL(q port.RecallQuery) (string, []any) {
 	groupID := ""
 	if q.Scene == port.SceneGroup {
 		groupID = q.TargetID
 	}
-	query := `SELECT id, scope, owner_id, kind, subject, predicate, object, content,
+	query := `SELECT id, scope, owner_id, kind, subject, predicate, object, content, embedding,
 			importance, confidence, stability, pinned, last_access_at
 		FROM memory_item
 		WHERE status = 'active' AND invalid_at IS NULL
 		  AND ((scope = 'group' AND owner_id = ?) OR (scope = 'user' AND owner_id = ?))`
 	args := []any{groupID, q.SpeakerID}
-	bigrams := strings.Fields(text.Bigrams(q.Text))
-	if len(bigrams) > maxBigramFilters {
-		bigrams = bigrams[:maxBigramFilters]
-	}
-	if len(bigrams) > 0 {
-		parts := make([]string, len(bigrams))
-		for i, bg := range bigrams {
-			parts[i] = "bigrams LIKE ?"
-			args = append(args, "%"+bg+"%")
+	if len(q.Vec) == 0 {
+		bigrams := strings.Fields(text.Bigrams(q.Text))
+		if len(bigrams) > maxBigramFilters {
+			bigrams = bigrams[:maxBigramFilters]
 		}
-		query += " AND (" + strings.Join(parts, " OR ") + ")"
+		if len(bigrams) > 0 {
+			parts := make([]string, len(bigrams))
+			for i, bg := range bigrams {
+				parts[i] = "bigrams LIKE ?"
+				args = append(args, "%"+bg+"%")
+			}
+			query += " AND (" + strings.Join(parts, " OR ") + ")"
+		}
 	}
 	query += " ORDER BY last_access_at DESC LIMIT ?"
 	return query, append(args, memoryCandidateLimit)
@@ -209,16 +210,18 @@ func scanRecallRows(rows *sql.Rows, postgres bool, q port.RecallQuery, now time.
 	candidates := make([]port.MemoryItem, 0, 16)
 	for rows.Next() {
 		var (
-			item  port.MemoryItem
-			scope string
+			item   port.MemoryItem
+			scope  string
+			rawVec []byte
 		)
 		dst, at := timeDst(postgres)
-		if err := rows.Scan(&item.ID, &scope, &item.OwnerID, &item.Kind, &item.Subject, &item.Predicate, &item.Object, &item.Content, &item.Importance, &item.Confidence, &item.Stability, &item.Pinned, dst); err != nil {
+		if err := rows.Scan(&item.ID, &scope, &item.OwnerID, &item.Kind, &item.Subject, &item.Predicate, &item.Object, &item.Content, &rawVec, &item.Importance, &item.Confidence, &item.Stability, &item.Pinned, dst); err != nil {
 			return nil, fmt.Errorf("repo: scan memory: %w", err)
 		}
 		item.LastAccess = at()
 		item.Scope = port.Scope(scope)
-		item.Score = scoreMemory(item, queryBigrams, now)
+		item.Vec = decodeVector(rawVec)
+		item.Score = scoreMemory(item, queryBigrams, q.Vec, now)
 		candidates = append(candidates, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -288,8 +291,14 @@ func mmrSelect(items []port.MemoryItem, limit int, lambda float64) []port.Memory
 	return chosen
 }
 
-// itemSimilarity 是两条记忆的相似度：bigram Jaccard（删 embed 后不再有向量路径）。
+// itemSimilarity 是两条记忆的相似度：同维向量用余弦（负相关记 0），否则用 bigram Jaccard。
 func itemSimilarity(a, b port.MemoryItem) float64 {
+	if len(a.Vec) > 0 && len(a.Vec) == len(b.Vec) {
+		if cos := text.Cosine(a.Vec, b.Vec); cos > 0 {
+			return cos
+		}
+		return 0
+	}
 	return jaccard(bigramSet(a.Content), bigramSet(b.Content))
 }
 
@@ -297,12 +306,19 @@ func itemSimilarity(a, b port.MemoryItem) float64 {
 func estimateTokens(s string) int { return len([]rune(s))/2 + 1 }
 
 // scoreMemory 是精排唯一实现（docs/02 §1.2）：0.45 相似度 + 0.25 可提取度 +
-// 0.20 重要度 + 0.10 新近度 + 0.30 置顶加分。相似度用 bigram Jaccard。
-//
-// 2026-11-01 删除 embed：表里的 embedding 列保留（历史数据不动），但不再读写，
-// 相似度恒走词面，因此这条路径不再依赖任何外部向量服务。
-func scoreMemory(item port.MemoryItem, queryBigrams map[string]struct{}, now time.Time) float64 {
-	sim := jaccard(queryBigrams, bigramSet(item.Content))
+// 0.20 重要度 + 0.10 新近度 + 0.30 置顶加分。
+// 相似度：有同维向量（query + 条目都已回填）用余弦，否则回退 bigram Jaccard
+// （无 embed 槽位的离线路径，表里的 embedding 列为空时自动落到这里）。
+func scoreMemory(item port.MemoryItem, queryBigrams map[string]struct{}, queryVec []float32, now time.Time) float64 {
+	var sim float64
+	if len(queryVec) > 0 && len(queryVec) == len(item.Vec) {
+		sim = text.Cosine(queryVec, item.Vec)
+		if sim < 0 {
+			sim = 0
+		}
+	} else {
+		sim = jaccard(queryBigrams, bigramSet(item.Content))
+	}
 	score := weightSimilarity*sim +
 		weightRetrievability*retrievability(item.LastAccess, now, item.Stability) +
 		weightImportance*item.Importance +
@@ -611,4 +627,70 @@ func jaccard(a, b map[string]struct{}) float64 {
 		return 0
 	}
 	return float64(inter) / float64(union)
+}
+
+// embeddingBackfillBatch 是单次向量回填的条数上限（memory.Engine 每轮复习顺带回填）。
+const embeddingBackfillBatch = 32
+
+// SetEmbedding 写入一条记忆的向量（float32 小端；SQLite BLOB / PG BYTEA 同一份字节）。
+func (r *MemoryRepo) SetEmbedding(ctx context.Context, id int64, vec []float32) error {
+	if len(vec) == 0 {
+		return nil
+	}
+	query := r.store.Dialect().Rebind(`UPDATE memory_item SET embedding = ?, updated_at = ? WHERE id = ?`)
+	if _, err := r.store.Writer().ExecContext(ctx, query, encodeVector(vec), stamp(r.store, r.clk.Now()), id); err != nil {
+		return fmt.Errorf("repo: set memory embedding: %w", err)
+	}
+	return nil
+}
+
+// PendingEmbeddings 取还没有向量的活跃记忆（memory.Engine 回填用，按 id 从新到旧）。
+func (r *MemoryRepo) PendingEmbeddings(ctx context.Context, limit int) ([]port.MemoryItem, error) {
+	if limit <= 0 {
+		limit = embeddingBackfillBatch
+	}
+	query := r.store.Dialect().Rebind(`SELECT id, content FROM memory_item
+		WHERE status = 'active' AND invalid_at IS NULL AND embedding IS NULL
+		ORDER BY id DESC LIMIT ?`)
+	rows, err := r.store.Reader().QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("repo: pending memory embeddings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []port.MemoryItem
+	for rows.Next() {
+		var item port.MemoryItem
+		if err := rows.Scan(&item.ID, &item.Content); err != nil {
+			return nil, fmt.Errorf("repo: scan pending memory: %w", err)
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("repo: iterate pending memory: %w", err)
+	}
+	return out, nil
+}
+
+// encodeVector 把向量编码成 float32 小端字节；空向量返回 nil（DB 视为未计算）。
+func encodeVector(vec []float32) []byte {
+	if len(vec) == 0 {
+		return nil
+	}
+	raw := make([]byte, 4*len(vec))
+	for i, v := range vec {
+		binary.LittleEndian.PutUint32(raw[4*i:], math.Float32bits(v))
+	}
+	return raw
+}
+
+// decodeVector 解析 float32 小端字节；空值或长度非法（非 4 的倍数）返回 nil。
+func decodeVector(raw []byte) []float32 {
+	if len(raw) == 0 || len(raw)%4 != 0 {
+		return nil
+	}
+	vec := make([]float32, len(raw)/4)
+	for i := range vec {
+		vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(raw[4*i:]))
+	}
+	return vec
 }

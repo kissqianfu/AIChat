@@ -148,7 +148,7 @@ type Document struct {
 	FetchedAt time.Time
 }
 
-// Embedder 是向量化契约（本期关闭，接口预留）。
+// Embedder 是向量化契约（记忆向量回填用；配置 models.embed 槽位才装配实现）。
 type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }

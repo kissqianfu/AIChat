@@ -10,6 +10,7 @@ import (
 
 	"github.com/kissqianfu/aichat/internal/admin"
 	"github.com/kissqianfu/aichat/internal/limits"
+	"github.com/kissqianfu/aichat/internal/llm/openai"
 	"github.com/kissqianfu/aichat/internal/llm/protocol"
 	"github.com/kissqianfu/aichat/internal/llm/provider"
 	"github.com/kissqianfu/aichat/internal/llm/registry"
@@ -84,6 +85,59 @@ func asrFor(ctx context.Context, reg *registry.Registry, keys keyGetter, logger 
 // auditWriter 写审计日志（repo.AdminRepo 实现；测试可替换）。
 type auditWriter interface {
 	Audit(ctx context.Context, actor, action, detail string) error
+}
+
+// memoryEmbedder 把 OpenAI 兼容 /embeddings 接成 port.Embedder（记忆向量回填用）。
+type memoryEmbedder struct {
+	client *openai.Client
+	model  string
+}
+
+// Embed 实现 port.Embedder（批量）。
+func (a *memoryEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	return a.client.Embed(ctx, a.model, texts)
+}
+
+// embedFor 按 models.embed 槽位构造记忆向量化客户端：槽位缺失 = 向量化关闭（返回 nil, nil）。
+// 只支持 OpenAI 兼容协议（embed 目前只有这一家实现），配置了别的协议按配置错误告警。
+func embedFor(reg *registry.Registry, keys keyGetter, logger *slog.Logger) (*memoryEmbedder, error) {
+	if reg == nil || keys == nil {
+		return nil, errors.New("registry 或密钥仓库为空")
+	}
+	ref, ok := reg.SlotModel("embed")
+	if !ok {
+		logger.Info("记忆向量化未启用", "reason", "config.yaml 没有 embed 槽位（检索走词面路径）")
+		return nil, nil
+	}
+	if proto := protocol.Normalize(ref.Protocol); proto != "" && proto != protocol.OpenAI {
+		return nil, fmt.Errorf("models.embed 协议 %q 不支持（只支持 openai 兼容端点）", ref.Protocol)
+	}
+	client := openai.New(openai.Config{
+		BaseURL: ref.BaseURL,
+		APIKey:  func(ctx context.Context) (string, error) { return keys.Key(ctx, ref.APIKeyName) },
+	})
+	if client == nil {
+		return nil, errors.New("models.embed 缺 base_url")
+	}
+	logger.Info("记忆向量化已启用", "model", ref.Model, "base_url", ref.BaseURL)
+	return &memoryEmbedder{client: client, model: ref.Model}, nil
+}
+
+// queryEmbedder 把向量化客户端接成"单条文本 → 查询向量"闭包（召回 query 用）；nil = 词面路径。
+func queryEmbedder(embedder *memoryEmbedder) func(context.Context, string) ([]float32, error) {
+	if embedder == nil {
+		return nil
+	}
+	return func(ctx context.Context, text string) ([]float32, error) {
+		vecs, err := embedder.client.Embed(ctx, embedder.model, []string{text})
+		if err != nil {
+			return nil, err
+		}
+		if len(vecs) == 0 || len(vecs[0]) == 0 {
+			return nil, errors.New("bootstrap: embedding 返回空向量")
+		}
+		return vecs[0], nil
+	}
 }
 
 // imageGenFnFor 按 models.imagegen 槽位构造画图闭包：protocol 决定用谁家。
