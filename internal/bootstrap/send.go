@@ -55,34 +55,6 @@ func sendText(ctx context.Context, sender *qqapi.Adapter, budget *budget.Budget,
 	logger.Info("指令已回复", "event_id", ev.ID, "msg_id", res.PlatformMsgID)
 }
 
-// sendMediaBlocks 发一条富媒体消息（/draw 的图片；同样消耗被动额度，失败只告警）。
-func sendMediaBlocks(ctx context.Context, sender *qqapi.Adapter, budget *budget.Budget,
-	ev port.Event, blocks []port.Block, logger *slog.Logger) {
-	if len(blocks) == 0 {
-		return
-	}
-	seq := 1
-	if budget != nil {
-		got, ok := budget.Take(ev.Scene, ev.MsgID)
-		if !ok {
-			logger.Warn("富媒体发送失败：被动额度用尽", "event_id", ev.ID)
-			return
-		}
-		seq = got
-	}
-	res, err := sender.Send(ctx, port.Target{Scene: ev.Scene, ID: ev.TargetID}, port.Outbound{
-		Intent:  port.IntentMedia,
-		Content: port.RichMessage{Blocks: blocks},
-		Anchor:  port.Anchor{MsgID: ev.MsgID},
-		Seq:     seq,
-	})
-	if err != nil {
-		logger.Warn("富媒体发送失败", "event_id", ev.ID, "err", err)
-		return
-	}
-	logger.Info("富媒体已发送", "event_id", ev.ID, "msg_id", res.PlatformMsgID)
-}
-
 // runWebhook 起 HTTP 服务（只监听配置里的回环地址）并挂 /aichat/webhook。
 
 // sendEventReply 用事件锚点（event_id）回一条轻消息（互动事件等没有 msg_id 的场景）。

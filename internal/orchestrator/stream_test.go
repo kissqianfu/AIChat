@@ -48,12 +48,11 @@ func (s *fakeStream) Close() error { return nil }
 
 // fakeStreamer 记录流式调用。
 type fakeStreamer struct {
-	started   []string
-	appended  []string
-	finished  int
-	aborted   int
-	startErr  error
-	quotaLeft bool
+	started  []string
+	appended []string
+	finished int
+	aborted  int
+	startErr error
 }
 
 func (f *fakeStreamer) Start(_ context.Context, _ port.Event, content string) error {

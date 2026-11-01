@@ -24,8 +24,6 @@ const (
 	defaultMemoryTokens = 400
 	// maxBigramFilters 是 SQL 粗筛用到的 bigram 数（防 SQL 太长）。
 	maxBigramFilters = 5
-	// embeddingBackfillBatch 是单次向量回填的条数上限（Engine 每轮 ReviewLoop 调用）。
-	embeddingBackfillBatch = 32
 	// 精排权重（docs/01 §3.1）：0.45 相似度 + 0.25 可提取度 + 0.20 重要度 + 0.10 新近度。
 	// 有同维向量时"相似度"用余弦，否则回退 bigram Jaccard（无 provider 的离线路径）。
 	weightSimilarity     = 0.45
