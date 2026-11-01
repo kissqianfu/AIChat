@@ -150,7 +150,8 @@ type ModelRef struct {
 	//                    差异（思考开关、缓存字段、端点前缀）在各家自己的包里；
 	//   asr              openai（默认，multipart /audio/transcriptions）| qianwen
 	//                    （chat/completions + input_audio 内容块）；
-	//   tts              elevenlabs（默认，pcm_24000 → silk）| breeze（同形，mp3 直传）；
+	//   tts              elevenlabs（默认，pcm_24000 → silk）| breeze（同形，mp3 直传）|
+	//                    qianwen（百炼原生 /audio/tts/SpeechSynthesizer，mp3 直传）；
 	//   imagegen         openai（默认，/images/generations）| qianwen（百炼原生
 	//                    multimodal-generation；注意它**不在** compatible-mode 下）；
 	//   embed            openai（默认，/embeddings；第三方兼容端点写 base_url 覆盖）；
