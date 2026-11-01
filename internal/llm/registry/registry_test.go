@@ -191,3 +191,41 @@ func TestProtocolValidation(t *testing.T) {
 		})
 	}
 }
+
+// protocol 是 yaml 里每个引用的显式字段，要能原样读出来交给 adapter 与计费。
+func TestProtocolParsed(t *testing.T) {
+	path := writeTemp(t, `
+models:
+  chat:
+    fast: {primary: {protocol: deepseek, base_url: x, model: chat-1, api_key_name: k}}
+    strong:
+      primary: {protocol: qianwen, base_url: u, model: qwen-max, api_key_name: qk}
+      fallbacks: [{protocol: openai, base_url: o, model: gpt-x, api_key_name: ok}]
+  vision: {primary: {protocol: DeepSeek, base_url: x, model: v-1, api_key_name: k}}
+`)
+	r, err := Load(path, Options{Key: testKey})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if ref, _ := r.SlotModel("chat.fast"); ref.Protocol != "deepseek" {
+		t.Fatalf("chat.fast protocol = %q", ref.Protocol)
+	}
+	if ref, _ := r.SlotModel("chat.strong"); ref.Protocol != "qianwen" {
+		t.Fatalf("chat.strong protocol = %q", ref.Protocol)
+	}
+	if ref, _ := r.SlotModel("vision"); ref.Protocol != "DeepSeek" {
+		t.Fatalf("vision protocol 应保留原始写法（归一化在 adapter 做），实得 %q", ref.Protocol)
+	}
+}
+
+// base_url 留空时用 protocol 的默认端点——对话槽位不再强制写 base_url。
+func TestChatSlotWithoutBaseURL(t *testing.T) {
+	path := writeTemp(t, `
+models:
+  chat:
+    fast: {primary: {protocol: qianwen, model: qwen-plus, api_key_name: k}}
+`)
+	if _, err := Load(path, Options{Key: testKey}); err != nil {
+		t.Fatalf("省略 base_url 应允许（走 protocol 默认端点）：%v", err)
+	}
+}
