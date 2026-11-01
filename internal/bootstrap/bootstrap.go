@@ -253,19 +253,24 @@ func (w *wiring) openRepos() {
 	w.proactive = newProactiveAdapter(w.store, w.clk)
 }
 
-// scheduleWindows 把 config 的 hours 规则解析成 []schedule.Window；格式已由 config 校验，
-// 这里解析失败（理论上不可达）跳过该条并告警。windows 为空时用内置默认。
+// scheduleWindows 把 config 的 hours 规则解析成 []schedule.Window（启动时调用）。
 func (w *wiring) scheduleWindows() []schedule.Window {
+	return parseWindows(w.cfg.Hours.Windows, w.logger)
+}
+
+// parseWindows 把 config 的 hours.windows 列表解析成 []schedule.Window；格式已由 config 校验，
+// 这里解析失败（理论上不可达）跳过该条并告警。windows 为空时用内置默认。
+func parseWindows(wcs []config.WindowConfig, logger *slog.Logger) []schedule.Window {
 	var wins []schedule.Window
-	for _, wc := range w.cfg.Hours.Windows {
+	for _, wc := range wcs {
 		start, end, err := config.ParseWindow(wc.Range)
 		if err != nil {
-			w.logger.Warn("hours.windows 区间解析失败，跳过该条", "range", wc.Range, "err", err)
+			logger.Warn("hours.windows 区间解析失败，跳过该条", "range", wc.Range, "err", err)
 			continue
 		}
 		days, err := config.ParseDays(wc.Days)
 		if err != nil {
-			w.logger.Warn("hours.windows 星期解析失败，跳过该条", "days", wc.Days, "err", err)
+			logger.Warn("hours.windows 星期解析失败，跳过该条", "days", wc.Days, "err", err)
 			continue
 		}
 		wins = append(wins, schedule.Window{
@@ -276,6 +281,18 @@ func (w *wiring) scheduleWindows() []schedule.Window {
 		return wins
 	}
 	return schedule.DefaultWindows()
+}
+
+// reloadHours 热加载 hours 段（config.yaml 变更时由 watchModels 调用，docs/08 §2.6）：
+// 重读整个配置文件取最新 hours.windows，成功即热更判定规则；失败保留旧版并告警。
+func (w *wiring) reloadHours(path string) {
+	fresh, err := config.Load(path)
+	if err != nil {
+		w.logger.Warn("config.yaml hours 段热加载失败，保留旧版", "err", err)
+		return
+	}
+	w.scheduler.SetWindows(parseWindows(fresh.Hours.Windows, w.logger))
+	w.logger.Info("config.yaml hours 段已热加载", "windows", len(fresh.Hours.Windows))
 }
 
 // buildMemory 装配记忆族：抽取器、记忆引擎、情景/关系摘要、巩固排期与回复缓存。

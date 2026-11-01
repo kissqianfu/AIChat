@@ -443,3 +443,33 @@ func TestCustomWindows(t *testing.T) {
 		t.Fatalf("默认周六 23:30 = %s, want night", got)
 	}
 }
+
+func TestSetWindowsHotReload(t *testing.T) {
+	store := newFakeStore()
+	tm := at(10, 30, 10, 30) // 周五 10:30：内置默认 = work
+	s := New(clock.NewFrozen(tm), store)
+	if p := mustResolve(t, s, "group-1"); p.Tier != TierWork {
+		t.Fatalf("初始档位 = %q, want work", p.Tier)
+	}
+
+	// 热更新为「只有深夜档」：10:30 无命中 → full。
+	s.SetWindows([]Window{{StartMin: 23 * 60, EndMin: 7 * 60, Days: 0x7F, Tier: TierNight}})
+	if p := mustResolve(t, s, "group-1"); p.Tier != TierFull {
+		t.Fatalf("热更后档位 = %q, want full", p.Tier)
+	}
+
+	// 空列表 = 清空自定义、回到内置默认。
+	s.SetWindows(nil)
+	if p := mustResolve(t, s, "group-1"); p.Tier != TierWork {
+		t.Fatalf("清空后档位 = %q, want work（内置默认）", p.Tier)
+	}
+}
+
+func mustResolve(t *testing.T, s *Scheduler, groupID string) Policy {
+	t.Helper()
+	p, err := s.Resolve(context.Background(), groupID)
+	if err != nil {
+		t.Fatalf("Resolve(%q) error: %v", groupID, err)
+	}
+	return p
+}

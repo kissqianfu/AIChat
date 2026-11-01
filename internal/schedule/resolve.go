@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kissqianfu/aichat/internal/platform/clock"
@@ -40,7 +41,9 @@ type Scheduler struct {
 	store OverrideStore
 	exc   ExceptionStore
 	loc   *time.Location
-	wins  []Window
+
+	mu   sync.RWMutex
+	wins []Window
 }
 
 // New 构造 Scheduler；clk 为 nil 时退回系统时钟，store 为 nil 时 Resolve/SetOverride 返回错误。
@@ -53,10 +56,19 @@ func New(clk clock.Clock, store OverrideStore) *Scheduler {
 
 // WithWindows 覆盖默认时段规则（config 的 hours.windows 列表；不调则用内置默认）。
 func (s *Scheduler) WithWindows(wins []Window) *Scheduler {
-	if len(wins) > 0 {
-		s.wins = wins
-	}
+	s.SetWindows(wins)
 	return s
+}
+
+// SetWindows 热更新时段规则（config hours 段热重载用，docs/08 §2.6）。
+// 空列表视为「清空自定义、回到内置默认」——与启动时 windows 为空的语义一致。
+func (s *Scheduler) SetWindows(wins []Window) {
+	if len(wins) == 0 {
+		wins = DefaultWindows()
+	}
+	s.mu.Lock()
+	s.wins = wins
+	s.mu.Unlock()
 }
 
 // Resolve 判定 groupID 当前应使用的策略。
@@ -98,7 +110,10 @@ func (s *Scheduler) Resolve(ctx context.Context, groupID string) (Policy, error)
 	}
 
 	// 无有效 override 与例外日，按固定时区套默认规则。
-	return policyFor(matchDefaultTier(now.In(s.loc), s.wins))
+	s.mu.RLock()
+	tier := matchDefaultTier(now.In(s.loc), s.wins)
+	s.mu.RUnlock()
+	return policyFor(tier)
 }
 
 // SetOverride 写入一条临时强制档位，ttl 后自动失效（到点即失效，半开区间）。

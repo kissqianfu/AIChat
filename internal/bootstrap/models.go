@@ -78,6 +78,8 @@ func (w *wiring) watchModels(ctx context.Context) {
 			return nil
 		}
 		w.logger.Info("config.yaml models 段已热加载", "slots", len(reg.SlotNames()), "snapshots", reg.SnapshotCount())
+		// hours 段同文件：models 重载成功后顺带热更分时段规则（档位窗口原本只在启动时读一次）。
+		w.reloadHours(path)
 		return nil
 	})
 }
